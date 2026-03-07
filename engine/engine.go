@@ -38,14 +38,16 @@ func resolveRunner(ref config.RunnerRef) (runner.Runner, error) {
 
 func runMetric(ctx context.Context, m config.Metric, repoPath, commit string) Result {
 	start := time.Now()
+	hash := config.MetricHash(m)
 
 	r, err := resolveRunner(m.Runner)
 	if err != nil {
 		return Result{
-			MetricID: m.ID,
-			Commit:   commit,
-			Status:   StatusError,
-			Error:    err.Error(),
+			MetricID:   m.ID,
+			MetricHash: hash,
+			Commit:     commit,
+			Status:     StatusError,
+			Error:      err.Error(),
 		}
 	}
 
@@ -62,8 +64,9 @@ func runMetric(ctx context.Context, m config.Metric, repoPath, commit string) Re
 	if err != nil {
 		return Result{
 			MetricID:   m.ID,
+			MetricHash: hash,
 			Commit:     commit,
-			Status:     "error",
+			Status:     StatusError,
 			Error:      err.Error(),
 			DurationMs: duration,
 		}
@@ -71,6 +74,7 @@ func runMetric(ctx context.Context, m config.Metric, repoPath, commit string) Re
 
 	return Result{
 		MetricID:   m.ID,
+		MetricHash: hash,
 		Commit:     commit,
 		Value:      res.Value,
 		Files:      res.Files,

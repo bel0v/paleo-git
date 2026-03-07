@@ -9,6 +9,7 @@ const (
 
 type Result struct {
 	MetricID   string    `json:"metric_id"`
+	MetricHash string    `json:"metric_hash"`
 	Commit     string    `json:"commit"`
 	AuthorDate time.Time `json:"author_date"`
 	Value      int       `json:"value"`
