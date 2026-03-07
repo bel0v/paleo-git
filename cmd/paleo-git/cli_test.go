@@ -55,7 +55,7 @@ func TestMeasureCmd_PrintsJSON(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].Status != "ok" {
+	if results[0].Status != engine.StatusOK {
 		t.Errorf("expected status ok, got %s", results[0].Status)
 	}
 	if results[0].Value != 3 {

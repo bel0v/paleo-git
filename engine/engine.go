@@ -12,8 +12,13 @@ import (
 	"github.com/bel0v/paleo-git/vcs"
 )
 
+type MeasuredKey struct {
+	MetricID string
+	Commit   string
+}
+
 type ScanOptions struct {
-	AlreadyMeasured []string
+	AlreadyMeasured []MeasuredKey
 }
 
 func resolveRunner(ref config.RunnerRef) (runner.Runner, error) {
@@ -39,7 +44,7 @@ func runMetric(ctx context.Context, m config.Metric, repoPath, commit string) Re
 		return Result{
 			MetricID: m.ID,
 			Commit:   commit,
-			Status:   "error",
+			Status:   StatusError,
 			Error:    err.Error(),
 		}
 	}
@@ -69,28 +74,38 @@ func runMetric(ctx context.Context, m config.Metric, repoPath, commit string) Re
 		Commit:     commit,
 		Value:      res.Value,
 		Files:      res.Files,
-		Status:     "ok",
+		Status:     StatusOK,
 		DurationMs: duration,
 	}
 }
 
 // Measure runs all metrics at a single commit and returns results.
+// The commit ref is resolved to its SHA and author date.
 // One metric's failure does not prevent others from running.
-func Measure(cfg config.Config, repoPath, commit string) ([]Result, error) {
-	ctx := context.Background()
+func Measure(ctx context.Context, cfg config.Config, repoPath, commit string) ([]Result, error) {
+	meta, err := vcs.ResolveCommit(ctx, repoPath, commit)
+	if err != nil {
+		return nil, fmt.Errorf("resolving commit %q: %w", commit, err)
+	}
+
 	var results []Result
 	for _, m := range cfg.Metrics {
-		results = append(results, runMetric(ctx, m, repoPath, commit))
+		r := runMetric(ctx, m, repoPath, meta.SHA)
+		r.AuthorDate = meta.AuthorDate
+		results = append(results, r)
 	}
 	return results, nil
 }
 
 // Scan traverses commits per traversal, runs matching metrics at each commit,
 // and calls onResult for each measurement.
-func Scan(cfg config.Config, repoPath string, opts ScanOptions, onResult func(Result)) error {
-	skip := make(map[string]bool, len(opts.AlreadyMeasured))
-	for _, sha := range opts.AlreadyMeasured {
-		skip[sha] = true
+func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOptions, onResult func(Result)) error {
+	skip := make(map[string]map[string]bool) // commit -> set of metric IDs
+	for _, k := range opts.AlreadyMeasured {
+		if skip[k.Commit] == nil {
+			skip[k.Commit] = make(map[string]bool)
+		}
+		skip[k.Commit][k.MetricID] = true
 	}
 
 	// Group metrics by traversal
@@ -98,8 +113,6 @@ func Scan(cfg config.Config, repoPath string, opts ScanOptions, onResult func(Re
 	for _, m := range cfg.Metrics {
 		byTraversal[m.Traversal] = append(byTraversal[m.Traversal], m)
 	}
-
-	ctx := context.Background()
 
 	for travName, metrics := range byTraversal {
 		trav, ok := cfg.Traversals[travName]
@@ -113,16 +126,16 @@ func Scan(cfg config.Config, repoPath string, opts ScanOptions, onResult func(Re
 			every = 1
 		}
 
-		commits, err := vcs.ListCommits(repoPath, trav.Range.Start, trav.Range.End, firstParent, every)
+		commits, err := vcs.ListCommits(ctx, repoPath, trav.Range.Start, trav.Range.End, firstParent, every)
 		if err != nil {
 			return fmt.Errorf("listing commits for traversal %q: %w", travName, err)
 		}
 
 		for _, c := range commits {
-			if skip[c.SHA] {
-				continue
-			}
 			for _, m := range metrics {
+				if skip[c.SHA][m.ID] {
+					continue
+				}
 				result := runMetric(ctx, m, repoPath, c.SHA)
 				result.AuthorDate = c.AuthorDate
 				onResult(result)

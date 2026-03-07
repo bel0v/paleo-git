@@ -292,6 +292,55 @@ metrics:
 	}
 }
 
+func TestParseConfig_MalformedYAML(t *testing.T) {
+	_, err := Parse([]byte("not: [valid: yaml"))
+	if err == nil {
+		t.Fatal("expected error for malformed YAML")
+	}
+}
+
+func TestParseConfig_EmptyInput(t *testing.T) {
+	cfg, err := Parse([]byte(""))
+	if err != nil {
+		t.Fatalf("expected no error for empty input, got: %v", err)
+	}
+	// Empty config should have zero values
+	if cfg.Version != 0 {
+		t.Errorf("expected version 0, got %d", cfg.Version)
+	}
+}
+
+func TestValidateConfig_UnsupportedVersion(t *testing.T) {
+	yaml := `
+version: 99
+traversals:
+  default:
+    range: { start: "main~100", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 10 }
+metrics:
+  - id: test
+    traversal: default
+    paths:
+      include: ["src/**"]
+    runner:
+      builtin: git_grep_count
+      config:
+        pattern: "foo"
+`
+	cfg, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	err = Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for unsupported version")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Errorf("expected error to mention version, got: %v", err)
+	}
+}
+
 func TestValidateConfig_SamplingMustBePositive(t *testing.T) {
 	yaml := `
 version: 1

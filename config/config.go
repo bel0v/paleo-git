@@ -62,6 +62,10 @@ var validModes = map[string]bool{
 func Validate(cfg Config) error {
 	var errs []string
 
+	if cfg.Version != 1 {
+		errs = append(errs, fmt.Sprintf("version: unsupported version %d (supported: 1)", cfg.Version))
+	}
+
 	for name, tr := range cfg.Traversals {
 		if tr.Range.Start == "" {
 			errs = append(errs, fmt.Sprintf("traversals[%s].range.start: must not be empty", name))

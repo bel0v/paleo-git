@@ -2,6 +2,11 @@ package engine
 
 import "time"
 
+const (
+	StatusOK    = "ok"
+	StatusError = "error"
+)
+
 type Result struct {
 	MetricID   string    `json:"metric_id"`
 	Commit     string    `json:"commit"`

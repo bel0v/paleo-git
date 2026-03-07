@@ -24,7 +24,7 @@ func (g *GitGrepCount) Run(ctx context.Context, req runner.RunRequest) (*runner.
 		return nil, fmt.Errorf("git_grep_count: 'pattern' must be a string, got %T", patternRaw)
 	}
 
-	count, files, err := vcs.GrepCount(req.RepoPath, req.Commit, pattern, req.PathsInclude)
+	count, files, err := vcs.GrepCount(ctx, req.RepoPath, req.Commit, pattern, req.PathsInclude, req.PathsExclude)
 	if err != nil {
 		return nil, fmt.Errorf("git_grep_count: %w", err)
 	}

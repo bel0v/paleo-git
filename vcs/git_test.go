@@ -1,6 +1,7 @@
 package vcs
 
 import (
+	"context"
 	"testing"
 
 	"github.com/bel0v/paleo-git/internal/testutil"
@@ -9,7 +10,7 @@ import (
 func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
-	commits, err := ListCommits(repo, "HEAD~4", "HEAD", true, 1)
+	commits, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 1)
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -30,12 +31,12 @@ func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 func TestListCommits_SamplingStrideSkipsCommits(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
-	all, err := ListCommits(repo, "HEAD~4", "HEAD", true, 1)
+	all, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 1)
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
 
-	sampled, err := ListCommits(repo, "HEAD~4", "HEAD", true, 2)
+	sampled, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 2)
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -45,41 +46,12 @@ func TestListCommits_SamplingStrideSkipsCommits(t *testing.T) {
 	}
 }
 
-func TestListChangedFiles_ReturnsExpected(t *testing.T) {
-	repo := testutil.CreateFixtureRepo(t)
-
-	// Get the latest commit (commit 5 adds test/d.test.ts)
-	commits, err := ListCommits(repo, "HEAD~1", "HEAD", true, 1)
-	if err != nil {
-		t.Fatalf("ListCommits error: %v", err)
-	}
-	if len(commits) == 0 {
-		t.Fatal("expected at least 1 commit")
-	}
-	lastCommit := commits[len(commits)-1].SHA
-
-	files, err := ListChangedFiles(repo, lastCommit)
-	if err != nil {
-		t.Fatalf("ListChangedFiles error: %v", err)
-	}
-
-	found := false
-	for _, f := range files {
-		if f == "test/d.test.ts" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected test/d.test.ts in changed files, got: %v", files)
-	}
-}
-
 func TestGrepCount_ReturnsCorrectCount(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
 	// At HEAD, there are 3 files with @legacy: src/a.ts (2 lines), src/b.ts (1), test/d.test.ts (1)
 	// Total lines matching: 4
-	count, files, err := GrepCount(repo, "HEAD", "@legacy/", nil)
+	count, files, err := GrepCount(context.Background(), repo, "HEAD", "@legacy/", nil, nil)
 	if err != nil {
 		t.Fatalf("GrepCount error: %v", err)
 	}
@@ -95,7 +67,7 @@ func TestGrepCount_RespectsPathFilter(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
 	// Only search in src/ — should exclude test/d.test.ts
-	count, files, err := GrepCount(repo, "HEAD", "@legacy/", []string{"src/"})
+	count, files, err := GrepCount(context.Background(), repo, "HEAD", "@legacy/", []string{"src/"}, nil)
 	if err != nil {
 		t.Fatalf("GrepCount error: %v", err)
 	}
@@ -110,5 +82,58 @@ func TestGrepCount_RespectsPathFilter(t *testing.T) {
 	}
 	if len(files) != 2 {
 		t.Errorf("expected 2 files, got %d: %v", len(files), files)
+	}
+}
+
+func TestGrepCount_RespectsExcludeFilter(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	// Search all files but exclude test/
+	count, files, err := GrepCount(context.Background(), repo, "HEAD", "@legacy/", nil, []string{"test/"})
+	if err != nil {
+		t.Fatalf("GrepCount error: %v", err)
+	}
+	// src/a.ts has 2 matches, src/b.ts has 1 = 3 total (test/d.test.ts excluded)
+	if count != 3 {
+		t.Errorf("expected 3 matches with test/ excluded, got %d", count)
+	}
+	for _, f := range files {
+		if f == "test/d.test.ts" {
+			t.Error("test/d.test.ts should not be in excluded results")
+		}
+	}
+}
+
+func TestResolveCommit_ReturnsMetadata(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	meta, err := ResolveCommit(context.Background(), repo, "HEAD")
+	if err != nil {
+		t.Fatalf("ResolveCommit error: %v", err)
+	}
+	if len(meta.SHA) != 40 {
+		t.Errorf("expected 40-char SHA, got %q", meta.SHA)
+	}
+	if meta.AuthorDate.IsZero() {
+		t.Error("expected non-zero AuthorDate")
+	}
+}
+
+func TestResolveCommit_RejectsFlagLikeRef(t *testing.T) {
+	_, err := ResolveCommit(context.Background(), "/tmp/repo", "--exec=bad")
+	if err == nil {
+		t.Fatal("expected error for flag-like ref")
+	}
+}
+
+func TestListCommits_RespectsContextCancellation(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := ListCommits(ctx, repo, "HEAD~4", "HEAD", true, 1)
+	if err == nil {
+		t.Fatal("expected error for cancelled context")
 	}
 }

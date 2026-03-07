@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/bel0v/paleo-git/runner"
@@ -27,10 +26,7 @@ type output struct {
 
 func (e *ExecRunner) Run(ctx context.Context, req runner.RunRequest) (*runner.RunResult, error) {
 	cmd := exec.CommandContext(ctx, e.argv[0], e.argv[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	setProcAttr(cmd)
 	cmd.WaitDelay = 500 * time.Millisecond
 
 	var stdout, stderr bytes.Buffer

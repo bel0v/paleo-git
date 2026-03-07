@@ -26,9 +26,10 @@ func main() {
 
 func buildRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:     "paleo-git",
-		Short:   "Track code migration progress in git repositories",
-		Version: fmt.Sprintf("%s (%s)", version, commit),
+		Use:          "paleo-git",
+		Short:        "Track code migration progress in git repositories",
+		Version:      fmt.Sprintf("%s (%s)", version, commit),
+		SilenceUsage: true,
 	}
 
 	rootCmd.AddCommand(measureCmd())
@@ -58,7 +59,7 @@ func measureCmd() *cobra.Command {
 		Short: "Run all metrics at a single commit",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			commit, _ := cmd.Flags().GetString("commit")
+			commitRef, _ := cmd.Flags().GetString("commit")
 			repoPath, _ := cmd.Flags().GetString("repo")
 
 			cfg, err := loadConfig(cfgPath)
@@ -66,7 +67,7 @@ func measureCmd() *cobra.Command {
 				return err
 			}
 
-			results, err := engine.Measure(cfg, repoPath, commit)
+			results, err := engine.Measure(cmd.Context(), cfg, repoPath, commitRef)
 			if err != nil {
 				return err
 			}
@@ -78,8 +79,8 @@ func measureCmd() *cobra.Command {
 			fmt.Fprintln(os.Stdout, string(out))
 
 			for _, r := range results {
-				if r.Status == "error" {
-					os.Exit(1)
+				if r.Status == engine.StatusError {
+					return fmt.Errorf("one or more metrics failed")
 				}
 			}
 			return nil
@@ -108,14 +109,14 @@ func scanCmd() *cobra.Command {
 
 			var opts engine.ScanOptions
 			if skipPath != "" {
-				shas, err := readSkipFile(skipPath)
+				keys, err := readSkipFile(skipPath)
 				if err != nil {
 					return err
 				}
-				opts.AlreadyMeasured = shas
+				opts.AlreadyMeasured = keys
 			}
 
-			return engine.Scan(cfg, repoPath, opts, func(r engine.Result) {
+			return engine.Scan(cmd.Context(), cfg, repoPath, opts, func(r engine.Result) {
 				line, err := json.Marshal(r)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "marshal error: %v\n", err)
@@ -132,7 +133,7 @@ func scanCmd() *cobra.Command {
 	return cmd
 }
 
-func readSkipFile(path string) ([]string, error) {
+func readSkipFile(path string) ([]engine.MeasuredKey, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading skip file: %w", err)
@@ -140,20 +141,24 @@ func readSkipFile(path string) ([]string, error) {
 	defer f.Close()
 
 	seen := make(map[string]bool)
+	var keys []engine.MeasuredKey
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var r engine.Result
 		if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
 			continue
 		}
-		if r.Commit != "" {
-			seen[r.Commit] = true
+		if r.Commit == "" {
+			continue
+		}
+		key := r.MetricID + ":" + r.Commit
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, engine.MeasuredKey{MetricID: r.MetricID, Commit: r.Commit})
 		}
 	}
-
-	var shas []string
-	for sha := range seen {
-		shas = append(shas, sha)
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading skip file: %w", err)
 	}
-	return shas, nil
+	return keys, nil
 }
