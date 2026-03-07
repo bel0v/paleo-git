@@ -174,7 +174,7 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		return 0, nil, err
 	}
 
-	args := []string{"-C", repoPath, "--no-pager", "grep", "-c", "-e", pattern, commit}
+	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-c", "-e", pattern, commit}
 	if len(includePaths) > 0 || len(excludePaths) > 0 {
 		args = append(args, "--")
 		args = append(args, includePaths...)
@@ -195,7 +195,11 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return 0, nil, nil
 		}
-		return 0, nil, gitError(args, stderr.String(), err)
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "cannot use Perl") || strings.Contains(stderrStr, "PCRE") {
+			return 0, nil, fmt.Errorf("git grep -P (Perl regex) not supported; install git with PCRE support (e.g. brew install git)")
+		}
+		return 0, nil, gitError(args, stderrStr, err)
 	}
 
 	count := 0

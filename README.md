@@ -141,10 +141,27 @@ metrics:
 
 ### `git_grep_count`
 
-Counts lines matching a regex at a commit using `git grep`.
+Counts lines matching a regex at a commit using `git grep -P` (Perl-compatible regex).
 
 Config:
-- `pattern` (required): regex pattern to match
+- `pattern` (required): Perl regex pattern to match
+
+Pattern examples:
+```yaml
+# Simple string match
+pattern: "from '@legacy/"
+
+# Multiple patterns (alternation)
+pattern: "TODO|FIXME|HACK"
+
+# Word boundary (whole word only)
+pattern: "\\bvar\\b"
+
+# File extensions in imports
+pattern: "\\.jsx?\\b"
+```
+
+Requires git compiled with PCRE support (default on macOS and most Linux distros).
 
 Returns: match count and list of files with matches.
 
