@@ -12,6 +12,11 @@ import (
 	"github.com/bel0v/paleo-git/engine"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 func main() {
 	if err := buildRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -21,8 +26,9 @@ func main() {
 
 func buildRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "paleo-git",
-		Short: "Track code migration progress in git repositories",
+		Use:     "paleo-git",
+		Short:   "Track code migration progress in git repositories",
+		Version: fmt.Sprintf("%s (%s)", version, commit),
 	}
 
 	rootCmd.AddCommand(measureCmd())
