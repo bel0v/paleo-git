@@ -35,6 +35,8 @@ func CreateFixtureRepo(t *testing.T) string {
 			"GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=Test",
 			"GIT_COMMITTER_EMAIL=test@test.com",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_SYSTEM=/dev/null",
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil {

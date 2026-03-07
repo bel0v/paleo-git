@@ -20,6 +20,16 @@ type CommitMeta struct {
 // If firstParent is true, only follows first parents (linear history).
 // The every parameter controls sampling stride: 1 = every commit, 2 = every other, etc.
 func ListCommits(repoPath, start, end string, firstParent bool, every int) ([]CommitMeta, error) {
+	if err := validateRepoPath(repoPath); err != nil {
+		return nil, err
+	}
+	if err := validateRef(start, "start"); err != nil {
+		return nil, err
+	}
+	if err := validateRef(end, "end"); err != nil {
+		return nil, err
+	}
+
 	args := []string{"-C", repoPath, "--no-pager", "rev-list", "--format=%H %aI", "--reverse"}
 	if firstParent {
 		args = append(args, "--first-parent")
@@ -71,6 +81,13 @@ func ListCommits(repoPath, start, end string, firstParent bool, every int) ([]Co
 
 // ListChangedFiles returns file paths changed in the given commit vs its parent.
 func ListChangedFiles(repoPath, commit string) ([]string, error) {
+	if err := validateRepoPath(repoPath); err != nil {
+		return nil, err
+	}
+	if err := validateRef(commit, "commit"); err != nil {
+		return nil, err
+	}
+
 	out, err := exec.Command("git", "-C", repoPath, "--no-pager", "diff-tree", "--no-commit-id", "-r", "--name-only", commit).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff-tree: %w", err)
@@ -91,7 +108,17 @@ func ListChangedFiles(repoPath, commit string) ([]string, error) {
 // If paths is non-empty, only files under those paths are searched.
 // Returns the match count and the list of files that contained matches.
 func GrepCount(repoPath, commit, pattern string, paths []string) (int, []string, error) {
-	args := []string{"-C", repoPath, "--no-pager", "grep", "-c", pattern, commit}
+	if err := validateRepoPath(repoPath); err != nil {
+		return 0, nil, err
+	}
+	if err := validateRef(commit, "commit"); err != nil {
+		return 0, nil, err
+	}
+	if err := validatePattern(pattern); err != nil {
+		return 0, nil, err
+	}
+
+	args := []string{"-C", repoPath, "--no-pager", "grep", "-c", "-e", pattern, commit}
 	if len(paths) > 0 {
 		args = append(args, "--")
 		args = append(args, paths...)
