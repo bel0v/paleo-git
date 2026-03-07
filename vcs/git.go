@@ -10,6 +10,23 @@ import (
 	"time"
 )
 
+// gitRun executes a git command and returns stdout. If the command fails,
+// the error includes stderr for actionable diagnostics.
+func gitRun(args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("git %s: %s", args[3], msg) // args[3] is the subcommand after -C <path> --no-pager
+		}
+		return nil, fmt.Errorf("git %s: %w", args[3], err)
+	}
+	return out, nil
+}
+
 type CommitMeta struct {
 	SHA        string
 	AuthorDate time.Time
@@ -36,9 +53,9 @@ func ListCommits(repoPath, start, end string, firstParent bool, every int) ([]Co
 	}
 	args = append(args, start+".."+end)
 
-	out, err := exec.Command("git", args...).Output()
+	out, err := gitRun(args...)
 	if err != nil {
-		return nil, fmt.Errorf("git rev-list: %w", err)
+		return nil, err
 	}
 
 	var all []CommitMeta
@@ -88,9 +105,9 @@ func ListChangedFiles(repoPath, commit string) ([]string, error) {
 		return nil, err
 	}
 
-	out, err := exec.Command("git", "-C", repoPath, "--no-pager", "diff-tree", "--no-commit-id", "-r", "--name-only", commit).Output()
+	out, err := gitRun("-C", repoPath, "--no-pager", "diff-tree", "--no-commit-id", "-r", "--name-only", commit)
 	if err != nil {
-		return nil, fmt.Errorf("git diff-tree: %w", err)
+		return nil, err
 	}
 
 	var files []string
@@ -125,11 +142,17 @@ func GrepCount(repoPath, commit, pattern string, paths []string) (int, []string,
 	}
 
 	cmd := exec.Command("git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
 		// git grep exits 1 when no matches found
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return 0, nil, nil
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return 0, nil, fmt.Errorf("git grep: %s", msg)
 		}
 		return 0, nil, fmt.Errorf("git grep: %w", err)
 	}

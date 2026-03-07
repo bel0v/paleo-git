@@ -291,3 +291,34 @@ metrics:
 		t.Fatal("expected validation error for invalid mode")
 	}
 }
+
+func TestValidateConfig_SamplingMustBePositive(t *testing.T) {
+	yaml := `
+version: 1
+traversals:
+  default:
+    range: { start: "main~100", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: -5 }
+metrics:
+  - id: test
+    traversal: default
+    paths:
+      include: ["src/**"]
+    runner:
+      builtin: git_grep_count
+      config:
+        pattern: "foo"
+`
+	cfg, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	err = Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for negative sampling")
+	}
+	if !strings.Contains(err.Error(), "sampling.every") {
+		t.Errorf("expected error to reference sampling.every, got: %v", err)
+	}
+}

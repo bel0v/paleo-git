@@ -72,6 +72,9 @@ func Validate(cfg Config) error {
 		if !validModes[tr.Mode] {
 			errs = append(errs, fmt.Sprintf("traversals[%s].mode: invalid mode %q (supported: first_parent)", name, tr.Mode))
 		}
+		if tr.Sampling.Every < 1 {
+			errs = append(errs, fmt.Sprintf("traversals[%s].sampling.every: must be at least 1 (got %d)", name, tr.Sampling.Every))
+		}
 	}
 
 	for i, m := range cfg.Metrics {
