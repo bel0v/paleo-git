@@ -16,11 +16,11 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
@@ -48,12 +48,13 @@ changelog:
       - "^🧪"
       - "^📝"
 
-brews:
-  - repository:
+homebrew_casks:
+  - name: paleo-git
+    binaries:
+      - paleo-git
+    repository:
       owner: bel0v
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/bel0v/paleo-git
     description: Track code migration progress in git repositories
-    license: Apache-2.0
-    install: |
-      bin.install "paleo-git"
