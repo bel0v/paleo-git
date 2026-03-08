@@ -13,10 +13,10 @@ import (
 
 // flagsWithValue lists git global flags that consume the next argument.
 var flagsWithValue = map[string]bool{
-	"-C":           true,
-	"--git-dir":    true,
-	"--work-tree":  true,
-	"--namespace":  true,
+	"-C":             true,
+	"--git-dir":      true,
+	"--work-tree":    true,
+	"--namespace":    true,
 	"--super-prefix": true,
 }
 
