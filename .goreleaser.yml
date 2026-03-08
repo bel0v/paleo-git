@@ -27,11 +27,26 @@ checksum:
 
 changelog:
   sort: asc
+  groups:
+    - title: "\U0001F4A5 Breaking Changes"
+      regexp: '^.*?💥'
+      order: 0
+    - title: "\U0001F680 Features"
+      regexp: '^.*?✨'
+      order: 1
+    - title: "\U0001F41B Bug Fixes"
+      regexp: '^.*?🐛'
+      order: 2
+    - title: "\U0001F528 Improvements"
+      regexp: '^.*?♻️'
+      order: 3
+    - title: "\U0001F5D1 Other"
+      order: 999
   filters:
     exclude:
-      - "^docs:"
-      - "^chore:"
-      - "^test:"
+      - "^🧹"
+      - "^🧪"
+      - "^📝"
 
 brews:
   - repository:
