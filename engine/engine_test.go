@@ -170,6 +170,30 @@ func TestScan_SkipsAlreadyMeasured(t *testing.T) {
 	}
 }
 
+func TestScan_ResultsInCommitOrder(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfg := makeTestConfig()
+
+	var results []Result
+	err := Scan(context.Background(), cfg, repo, ScanOptions{}, func(r Result) {
+		results = append(results, r)
+	})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("need at least 2 results to verify order, got %d", len(results))
+	}
+	// Results should arrive in oldest-first order (ascending AuthorDate).
+	for i := 1; i < len(results); i++ {
+		if results[i].AuthorDate.Before(results[i-1].AuthorDate) {
+			t.Errorf("result %d (commit %s, %v) is older than result %d (commit %s, %v)",
+				i, results[i].Commit[:8], results[i].AuthorDate,
+				i-1, results[i-1].Commit[:8], results[i-1].AuthorDate)
+		}
+	}
+}
+
 func TestScan_DifferentTraversals(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 	cfg := config.Config{
