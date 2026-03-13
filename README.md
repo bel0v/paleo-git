@@ -67,13 +67,13 @@ This prints a JSON array of results for HEAD:
 3. Scan history:
 
 ```bash
-paleo-git scan --config paleo.yml > results.jsonl
+paleo-git scan --config paleo.yml --save-dir ./paleo-data
 ```
 
-Streams one NDJSON line per (metric, commit) pair. Resume a scan:
+Streams one NDJSON line per (metric, commit) pair and saves results to a data directory. Resume a scan:
 
 ```bash
-paleo-git scan --config paleo.yml --skip results.jsonl >> results.jsonl
+paleo-git scan --config paleo.yml --load-dir ./paleo-data --save-dir ./paleo-data
 ```
 
 ## Commands
@@ -83,7 +83,7 @@ paleo-git scan --config paleo.yml --skip results.jsonl >> results.jsonl
 Run all metrics at a single commit.
 
 ```
-paleo-git measure --config <file> [--commit <ref>] [--repo <path>]
+paleo-git measure --config <file> [--commit <ref>] [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
 | Flag | Default | Description |
@@ -91,24 +91,29 @@ paleo-git measure --config <file> [--commit <ref>] [--repo <path>]
 | `--config` | (required) | Path to YAML config |
 | `--commit` | `HEAD` | Commit to measure |
 | `--repo` | `.` | Path to git repository |
+| `--load-dir` | (none) | Data directory with prior results (skips saving duplicates) |
+| `--save-dir` | (none) | Data directory to save results to |
+| `--quiet` | `false` | Suppress stdout output |
 
-Output: JSON array to stdout.
+Output: JSON array to stdout (unless `--quiet`).
 
 ### `scan`
 
 Traverse history and measure metrics at sampled commits.
 
 ```
-paleo-git scan --config <file> [--skip <file>] [--repo <path>]
+paleo-git scan --config <file> [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | (required) | Path to YAML config |
-| `--skip` | (none) | NDJSON file of prior results to skip |
 | `--repo` | `.` | Path to git repository |
+| `--load-dir` | (none) | Data directory with prior results to skip |
+| `--save-dir` | (none) | Data directory to save results to |
+| `--quiet` | `false` | Suppress stdout output |
 
-Output: NDJSON to stdout (one line per measurement).
+Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
 
 ## Config reference
 
