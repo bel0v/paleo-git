@@ -44,11 +44,7 @@ metrics:
 
 func readStore(t *testing.T, dataDir, metricID string) []engine.Result {
 	t.Helper()
-	d, err := store.NewDir(dataDir)
-	if err != nil {
-		t.Fatalf("NewDir error: %v", err)
-	}
-	results, err := d.Read(context.Background(), metricID)
+	results, err := store.NewDir(dataDir).Read(context.Background(), metricID)
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
 	}

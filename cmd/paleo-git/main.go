@@ -55,14 +55,6 @@ func loadConfig(path string) (config.Config, error) {
 	return cfg, nil
 }
 
-func openStoreDir(path string) (store.Dir, error) {
-	d, err := store.NewDir(path)
-	if err != nil {
-		return store.Dir{}, fmt.Errorf("invalid data directory: %w", err)
-	}
-	return d, nil
-}
-
 func measureCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "measure",
@@ -85,11 +77,7 @@ func measureCmd() *cobra.Command {
 			// Build skip set from existing data
 			skip := make(map[engine.MeasuredKey]bool)
 			if loadDir != "" {
-				d, err := openStoreDir(loadDir)
-				if err != nil {
-					return err
-				}
-				keys, err := d.AlreadyMeasured(ctx)
+				keys, err := store.NewDir(loadDir).AlreadyMeasured(ctx)
 				if err != nil {
 					return fmt.Errorf("loading data: %w", err)
 				}
@@ -104,7 +92,7 @@ func measureCmd() *cobra.Command {
 			}
 
 			// Filter out already-measured results
-			var newResults []engine.Result
+			newResults := make([]engine.Result, 0, len(results))
 			for _, r := range results {
 				k := engine.MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit}
 				if !skip[k] {
@@ -121,11 +109,7 @@ func measureCmd() *cobra.Command {
 			}
 
 			if saveDir != "" && len(newResults) > 0 {
-				d, err := openStoreDir(saveDir)
-				if err != nil {
-					return err
-				}
-				if err := d.Append(ctx, newResults); err != nil {
+				if err := store.NewDir(saveDir).Append(ctx, newResults); err != nil {
 					return fmt.Errorf("saving results: %w", err)
 				}
 			}
@@ -168,19 +152,19 @@ func scanCmd() *cobra.Command {
 
 			var opts engine.ScanOptions
 			if loadDir != "" {
-				d, err := openStoreDir(loadDir)
-				if err != nil {
-					return err
-				}
-				keys, err := d.AlreadyMeasured(ctx)
+				keys, err := store.NewDir(loadDir).AlreadyMeasured(ctx)
 				if err != nil {
 					return fmt.Errorf("loading data: %w", err)
 				}
 				opts.AlreadyMeasured = keys
 			}
 
-			var toSave []engine.Result
+			var saveStore store.Dir
+			if saveDir != "" {
+				saveStore = store.NewDir(saveDir)
+			}
 
+			var saveErr error
 			err = engine.Scan(ctx, cfg, repoPath, opts, func(r engine.Result) {
 				if !quiet {
 					line, err := json.Marshal(r)
@@ -190,25 +174,15 @@ func scanCmd() *cobra.Command {
 					}
 					fmt.Fprintln(out, string(line))
 				}
-				if saveDir != "" {
-					toSave = append(toSave, r)
+				if saveDir != "" && saveErr == nil {
+					saveErr = saveStore.Append(ctx, []engine.Result{r})
 				}
 			})
-			if err != nil {
-				return err
+			if saveErr != nil {
+				return fmt.Errorf("saving results: %w", saveErr)
 			}
 
-			if saveDir != "" && len(toSave) > 0 {
-				d, err := openStoreDir(saveDir)
-				if err != nil {
-					return err
-				}
-				if err := d.Append(ctx, toSave); err != nil {
-					return fmt.Errorf("saving results: %w", err)
-				}
-			}
-
-			return nil
+			return err
 		},
 	}
 	cmd.Flags().String("config", "", "Path to config file (required)")

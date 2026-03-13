@@ -19,16 +19,28 @@ type Dir struct {
 }
 
 // NewDir creates a Dir for the given data directory path.
-func NewDir(path string) (Dir, error) {
-	if path == "" {
-		return Dir{}, fmt.Errorf("store: data directory path must not be empty")
+func NewDir(path string) Dir {
+	return Dir{path: path}
+}
+
+// safeMetricID returns an error if the metric ID contains path separators
+// or traversal sequences that could escape the metrics directory.
+func safeMetricID(id string) error {
+	if id == "" {
+		return fmt.Errorf("store: metric id must not be empty")
 	}
-	return Dir{path: path}, nil
+	if strings.ContainsAny(id, "/\\") || id == "." || id == ".." || strings.Contains(id, "..") {
+		return fmt.Errorf("store: unsafe metric id %q", id)
+	}
+	return nil
 }
 
 // Read returns all results for a single metric. Returns an empty slice
 // (not an error) if the file does not exist.
 func (d Dir) Read(ctx context.Context, metricID string) ([]engine.Result, error) {
+	if err := safeMetricID(metricID); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(filepath.Join(d.path, "metrics", metricID+".jsonl"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -98,6 +110,9 @@ func (d Dir) AlreadyMeasured(ctx context.Context) ([]engine.MeasuredKey, error) 
 func (d Dir) Append(ctx context.Context, results []engine.Result) error {
 	grouped := make(map[string][]engine.Result)
 	for _, r := range results {
+		if err := safeMetricID(r.MetricID); err != nil {
+			return err
+		}
 		grouped[r.MetricID] = append(grouped[r.MetricID], r)
 	}
 

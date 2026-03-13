@@ -14,12 +14,17 @@ import (
 	"github.com/bel0v/paleo-git/vcs"
 )
 
+// MeasuredKey uniquely identifies a measurement: the metric definition
+// (ID + hash of its config) at a specific commit. Consumers use these
+// as skip-list keys to avoid re-measuring unchanged work.
 type MeasuredKey struct {
 	MetricID   string
 	MetricHash string
 	Commit     string
 }
 
+// ScanOptions configures a Scan run. AlreadyMeasured provides keys to
+// skip, enabling incremental scans that resume where a previous run left off.
 type ScanOptions struct {
 	AlreadyMeasured []MeasuredKey
 }

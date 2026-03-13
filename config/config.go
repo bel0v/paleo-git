@@ -81,7 +81,13 @@ func Validate(cfg Config) error {
 		}
 	}
 
+	seenIDs := make(map[string]int)
 	for i, m := range cfg.Metrics {
+		if prev, ok := seenIDs[m.ID]; ok {
+			errs = append(errs, fmt.Sprintf("metrics[%d].id: duplicate metric id %q (first defined at metrics[%d])", i, m.ID, prev))
+		}
+		seenIDs[m.ID] = i
+
 		if _, ok := cfg.Traversals[m.Traversal]; !ok {
 			errs = append(errs, fmt.Sprintf("metrics[%d].traversal: references nonexistent traversal %q", i, m.Traversal))
 		}

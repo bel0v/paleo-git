@@ -12,15 +12,6 @@ import (
 	"github.com/bel0v/paleo-git/engine"
 )
 
-func mustNewDir(t *testing.T, path string) Dir {
-	t.Helper()
-	d, err := NewDir(path)
-	if err != nil {
-		t.Fatalf("NewDir error: %v", err)
-	}
-	return d
-}
-
 func makeResult(metricID, metricHash, commit string, value int) engine.Result {
 	return engine.Result{
 		MetricID:   metricID,
@@ -58,13 +49,6 @@ func writeFixtureFile(t *testing.T, dir, metricID string, results []engine.Resul
 	}
 }
 
-func TestNewDir_RejectsEmptyPath(t *testing.T) {
-	_, err := NewDir("")
-	if err == nil {
-		t.Fatal("expected error for empty path")
-	}
-}
-
 func TestRead_ReturnsResultsFromFile(t *testing.T) {
 	dir := t.TempDir()
 	want := []engine.Result{
@@ -73,7 +57,7 @@ func TestRead_ReturnsResultsFromFile(t *testing.T) {
 	}
 	writeFixtureFile(t, dir, "legacy-imports", want)
 
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	got, err := d.Read(context.Background(), "legacy-imports")
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
@@ -90,7 +74,7 @@ func TestRead_ReturnsResultsFromFile(t *testing.T) {
 
 func TestRead_ReturnsEmptyForMissingFile(t *testing.T) {
 	dir := t.TempDir()
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	got, err := d.Read(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatalf("Read error: %v", err)
@@ -110,7 +94,7 @@ func TestAlreadyMeasured_ReadsAllMetricFiles(t *testing.T) {
 		makeResult("metric-b", "hash-b", "commit1", 5),
 	})
 
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	keys, err := d.AlreadyMeasured(context.Background())
 	if err != nil {
 		t.Fatalf("AlreadyMeasured error: %v", err)
@@ -140,7 +124,7 @@ func TestAlreadyMeasured_ReadsAllMetricFiles(t *testing.T) {
 
 func TestAlreadyMeasured_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	keys, err := d.AlreadyMeasured(context.Background())
 	if err != nil {
 		t.Fatalf("AlreadyMeasured error: %v", err)
@@ -154,7 +138,7 @@ func TestAppend_CreatesDirectoryAndFile(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := filepath.Join(dir, "data")
 
-	d := mustNewDir(t, dataDir)
+	d := NewDir(dataDir)
 	results := []engine.Result{
 		makeResult("my-metric", "hash1", "commit1", 42),
 	}
@@ -176,7 +160,7 @@ func TestAppend_CreatesDirectoryAndFile(t *testing.T) {
 
 func TestAppend_AppendsToExistingFile(t *testing.T) {
 	dir := t.TempDir()
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	ctx := context.Background()
 
 	batch1 := []engine.Result{makeResult("my-metric", "hash1", "commit1", 10)}
@@ -203,7 +187,7 @@ func TestAppend_AppendsToExistingFile(t *testing.T) {
 
 func TestAppend_GroupsByMetricID(t *testing.T) {
 	dir := t.TempDir()
-	d := mustNewDir(t, dir)
+	d := NewDir(dir)
 	ctx := context.Background()
 
 	results := []engine.Result{
@@ -229,5 +213,28 @@ func TestAppend_GroupsByMetricID(t *testing.T) {
 	}
 	if len(gotB) != 1 {
 		t.Fatalf("expected 1 result for metric-b, got %d", len(gotB))
+	}
+}
+
+func TestRead_RejectsUnsafeMetricID(t *testing.T) {
+	dir := t.TempDir()
+	d := NewDir(dir)
+
+	for _, id := range []string{"../escape", "../../etc/passwd", "foo/bar", "", ".."} {
+		_, err := d.Read(context.Background(), id)
+		if err == nil {
+			t.Errorf("expected error for metric id %q, got nil", id)
+		}
+	}
+}
+
+func TestAppend_RejectsUnsafeMetricID(t *testing.T) {
+	dir := t.TempDir()
+	d := NewDir(dir)
+
+	results := []engine.Result{makeResult("../escape", "hash", "commit1", 1)}
+	err := d.Append(context.Background(), results)
+	if err == nil {
+		t.Fatal("expected error for unsafe metric id in Append")
 	}
 }
