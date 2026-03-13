@@ -371,3 +371,42 @@ metrics:
 		t.Errorf("expected error to reference sampling.every, got: %v", err)
 	}
 }
+
+func TestValidateConfig_DuplicateMetricIDs(t *testing.T) {
+	yaml := `
+version: 1
+traversals:
+  default:
+    range: { start: "main~100", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 10 }
+metrics:
+  - id: my-metric
+    traversal: default
+    paths:
+      include: ["src/**"]
+    runner:
+      builtin: git_grep_count
+      config:
+        pattern: "foo"
+  - id: my-metric
+    traversal: default
+    paths:
+      include: ["lib/**"]
+    runner:
+      builtin: git_grep_count
+      config:
+        pattern: "bar"
+`
+	cfg, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	err = Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for duplicate metric id")
+	}
+	if !strings.Contains(err.Error(), "duplicate metric id") {
+		t.Errorf("expected error to mention duplicate metric id, got: %v", err)
+	}
+}

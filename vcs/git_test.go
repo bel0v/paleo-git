@@ -20,10 +20,10 @@ func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 		t.Fatalf("expected at least 3 commits, got %d", len(commits))
 	}
 
-	// Verify order: oldest first
+	// Verify order: oldest first (ascending author date)
 	for i := 1; i < len(commits); i++ {
-		if commits[i].Order <= commits[i-1].Order {
-			t.Errorf("commits not in ascending order: %d <= %d", commits[i].Order, commits[i-1].Order)
+		if commits[i].AuthorDate.Before(commits[i-1].AuthorDate) {
+			t.Errorf("commits not in ascending order at index %d", i)
 		}
 	}
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/bel0v/paleo-git/config"
 	"github.com/bel0v/paleo-git/engine"
+	"github.com/bel0v/paleo-git/store"
 )
 
 var (
@@ -31,6 +31,8 @@ func buildRootCmd() *cobra.Command {
 		Version:      fmt.Sprintf("%s (%s)", version, commit),
 		SilenceUsage: true,
 	}
+
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "Suppress stdout output")
 
 	rootCmd.AddCommand(measureCmd())
 	rootCmd.AddCommand(scanCmd())
@@ -61,22 +63,56 @@ func measureCmd() *cobra.Command {
 			cfgPath, _ := cmd.Flags().GetString("config")
 			commitRef, _ := cmd.Flags().GetString("commit")
 			repoPath, _ := cmd.Flags().GetString("repo")
+			loadDir, _ := cmd.Flags().GetString("load-dir")
+			saveDir, _ := cmd.Flags().GetString("save-dir")
+			quiet, _ := cmd.Flags().GetBool("quiet")
+
+			ctx := cmd.Context()
 
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {
 				return err
 			}
 
-			results, err := engine.Measure(cmd.Context(), cfg, repoPath, commitRef)
+			// Build skip set from existing data
+			skip := make(map[engine.MeasuredKey]bool)
+			if loadDir != "" {
+				keys, err := store.NewDir(loadDir).AlreadyMeasured(ctx)
+				if err != nil {
+					return fmt.Errorf("loading data: %w", err)
+				}
+				for _, k := range keys {
+					skip[k] = true
+				}
+			}
+
+			results, err := engine.Measure(ctx, cfg, repoPath, commitRef)
 			if err != nil {
 				return err
 			}
 
-			out, err := json.MarshalIndent(results, "", "  ")
-			if err != nil {
-				return fmt.Errorf("marshalling results: %w", err)
+			// Filter out already-measured results
+			newResults := make([]engine.Result, 0, len(results))
+			for _, r := range results {
+				k := engine.MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit}
+				if !skip[k] {
+					newResults = append(newResults, r)
+				}
 			}
-			fmt.Fprintln(os.Stdout, string(out))
+
+			if !quiet {
+				out, err := json.MarshalIndent(newResults, "", "  ")
+				if err != nil {
+					return fmt.Errorf("marshalling results: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			}
+
+			if saveDir != "" && len(newResults) > 0 {
+				if err := store.NewDir(saveDir).Append(ctx, newResults); err != nil {
+					return fmt.Errorf("saving results: %w", err)
+				}
+			}
 
 			for _, r := range results {
 				if r.Status == engine.StatusError {
@@ -89,6 +125,8 @@ func measureCmd() *cobra.Command {
 	cmd.Flags().String("config", "", "Path to config file (required)")
 	cmd.Flags().String("commit", "HEAD", "Commit to measure")
 	cmd.Flags().String("repo", ".", "Path to git repository")
+	cmd.Flags().String("load-dir", "", "Load prior results from data directory")
+	cmd.Flags().String("save-dir", "", "Save results to data directory")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
 }
@@ -99,8 +137,13 @@ func scanCmd() *cobra.Command {
 		Short: "Traverse history and measure metrics at sampled commits",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			skipPath, _ := cmd.Flags().GetString("skip")
+			loadDir, _ := cmd.Flags().GetString("load-dir")
+			saveDir, _ := cmd.Flags().GetString("save-dir")
 			repoPath, _ := cmd.Flags().GetString("repo")
+			quiet, _ := cmd.Flags().GetBool("quiet")
+
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
 
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {
@@ -108,57 +151,44 @@ func scanCmd() *cobra.Command {
 			}
 
 			var opts engine.ScanOptions
-			if skipPath != "" {
-				keys, err := readSkipFile(skipPath)
+			if loadDir != "" {
+				keys, err := store.NewDir(loadDir).AlreadyMeasured(ctx)
 				if err != nil {
-					return err
+					return fmt.Errorf("loading data: %w", err)
 				}
 				opts.AlreadyMeasured = keys
 			}
 
-			return engine.Scan(cmd.Context(), cfg, repoPath, opts, func(r engine.Result) {
-				line, err := json.Marshal(r)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "marshal error: %v\n", err)
-					return
+			var saveStore store.Dir
+			if saveDir != "" {
+				saveStore = store.NewDir(saveDir)
+			}
+
+			var saveErr error
+			err = engine.Scan(ctx, cfg, repoPath, opts, func(r engine.Result) {
+				if !quiet {
+					line, err := json.Marshal(r)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "marshal error: %v\n", err)
+						return
+					}
+					fmt.Fprintln(out, string(line))
 				}
-				fmt.Fprintln(os.Stdout, string(line))
+				if saveDir != "" && saveErr == nil {
+					saveErr = saveStore.Append(ctx, []engine.Result{r})
+				}
 			})
+			if saveErr != nil {
+				return fmt.Errorf("saving results: %w", saveErr)
+			}
+
+			return err
 		},
 	}
 	cmd.Flags().String("config", "", "Path to config file (required)")
-	cmd.Flags().String("skip", "", "Path to NDJSON file of prior results to skip")
+	cmd.Flags().String("load-dir", "", "Load prior results from data directory")
+	cmd.Flags().String("save-dir", "", "Save results to data directory")
 	cmd.Flags().String("repo", ".", "Path to git repository")
 	_ = cmd.MarkFlagRequired("config")
 	return cmd
-}
-
-func readSkipFile(path string) ([]engine.MeasuredKey, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading skip file: %w", err)
-	}
-	defer f.Close()
-
-	seen := make(map[string]bool)
-	var keys []engine.MeasuredKey
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var r engine.Result
-		if err := json.Unmarshal(scanner.Bytes(), &r); err != nil {
-			continue
-		}
-		if r.Commit == "" {
-			continue
-		}
-		key := r.MetricID + ":" + r.Commit
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, engine.MeasuredKey{MetricID: r.MetricID, Commit: r.Commit})
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading skip file: %w", err)
-	}
-	return keys, nil
 }

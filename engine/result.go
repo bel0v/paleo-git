@@ -2,11 +2,15 @@ package engine
 
 import "time"
 
+// Status values for Result.
 const (
 	StatusOK    = "ok"
 	StatusError = "error"
 )
 
+// Result holds the outcome of running a single metric at a single commit.
+// Consumers should check Status before using Value — when Status is
+// StatusError, the Error field describes the failure.
 type Result struct {
 	MetricID   string    `json:"metric_id"`
 	MetricHash string    `json:"metric_hash"`

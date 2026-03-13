@@ -10,7 +10,7 @@ paleo-git measures metrics (grep counts, custom scripts) at git commits and retu
 # From source
 go install github.com/bel0v/paleo-git/cmd/paleo-git@latest
 
-# Homebrew (after first release)
+# Homebrew
 brew install bel0v/tap/paleo-git
 
 # Or download a binary from GitHub Releases
@@ -55,7 +55,9 @@ This prints a JSON array of results for HEAD:
 [
   {
     "metric_id": "legacy-imports",
+    "metric_hash": "a1b2c3d4e5f6...",
     "commit": "abc123...",
+    "author_date": "2025-03-10T14:30:00Z",
     "value": 42,
     "files": ["src/old.ts", "src/legacy.ts"],
     "status": "ok",
@@ -64,17 +66,19 @@ This prints a JSON array of results for HEAD:
 ]
 ```
 
-3. Scan history:
+3. Scan history and save results:
 
 ```bash
-paleo-git scan --config paleo.yml > results.jsonl
+paleo-git scan --config paleo.yml --save-dir ./paleo-data
 ```
 
-Streams one NDJSON line per (metric, commit) pair. Resume a scan:
+Streams one NDJSON line per (metric, commit) pair and saves results to a data directory. Resume a partial scan:
 
 ```bash
-paleo-git scan --config paleo.yml --skip results.jsonl >> results.jsonl
+paleo-git scan --config paleo.yml --load-dir ./paleo-data --save-dir ./paleo-data
 ```
+
+Already-measured (metric, config, commit) triples are skipped. If you change a metric's config (e.g. pattern), the new definition gets a different hash and all commits are re-measured for that metric.
 
 ## Commands
 
@@ -83,7 +87,7 @@ paleo-git scan --config paleo.yml --skip results.jsonl >> results.jsonl
 Run all metrics at a single commit.
 
 ```
-paleo-git measure --config <file> [--commit <ref>] [--repo <path>]
+paleo-git measure --config <file> [--commit <ref>] [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
 | Flag | Default | Description |
@@ -91,24 +95,44 @@ paleo-git measure --config <file> [--commit <ref>] [--repo <path>]
 | `--config` | (required) | Path to YAML config |
 | `--commit` | `HEAD` | Commit to measure |
 | `--repo` | `.` | Path to git repository |
+| `--load-dir` | (none) | Load prior results to skip already-measured metrics |
+| `--save-dir` | (none) | Save new results to data directory |
+| `--quiet` | `false` | Suppress stdout output |
 
-Output: JSON array to stdout.
+Output: JSON array to stdout (unless `--quiet`). Only new results are printed — if `--load-dir` is set, already-measured results are excluded from output.
 
 ### `scan`
 
 Traverse history and measure metrics at sampled commits.
 
 ```
-paleo-git scan --config <file> [--skip <file>] [--repo <path>]
+paleo-git scan --config <file> [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | (required) | Path to YAML config |
-| `--skip` | (none) | NDJSON file of prior results to skip |
 | `--repo` | `.` | Path to git repository |
+| `--load-dir` | (none) | Load prior results to skip already-measured commits |
+| `--save-dir` | (none) | Save results to data directory |
+| `--quiet` | `false` | Suppress stdout output |
 
-Output: NDJSON to stdout (one line per measurement).
+Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
+
+## Data directory
+
+When using `--save-dir`, results are stored as NDJSON files organized by metric ID:
+
+```
+paleo-data/
+  metrics/
+    legacy-imports.jsonl
+    todo-count.jsonl
+```
+
+Each line is a JSON object with the same schema as the stdout output. Files are append-only — new measurements are added to the end.
+
+Use `--load-dir` to read existing results and skip re-measuring the same (metric_id, metric_hash, commit) triples. You can point both flags at the same directory for incremental scans.
 
 ## Config reference
 
@@ -125,7 +149,7 @@ traversals:
       every: 25               # Stride: 1 = every commit, 10 = every 10th
 
 metrics:
-  - id: <string>              # Unique identifier
+  - id: <string>              # Unique identifier (no slashes or path separators)
     description: <string>     # Optional human description
     traversal: <name>         # Required: which traversal to use
     paths:
@@ -136,6 +160,13 @@ metrics:
       config:                  # Runner-specific config (opaque)
         pattern: "..."
 ```
+
+Validation rules:
+- Metric IDs must be unique
+- Each metric must reference an existing traversal
+- Runner must specify exactly one of `builtin` or `exec`
+- `paths.include` must not be empty
+- `sampling.every` must be at least 1
 
 ## Built-in runners
 
@@ -185,8 +216,6 @@ An external runner is any executable that:
 `value` is required (integer). `files` is optional.
 
 Exit code 0 = success. Non-zero = error (stderr is captured).
-
-See `examples/runners/count-imports.sh` for a working example.
 
 ## Architecture
 
