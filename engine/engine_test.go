@@ -153,10 +153,10 @@ func TestScan_SkipsAlreadyMeasured(t *testing.T) {
 		t.Fatalf("Scan error: %v", err)
 	}
 
-	// Second scan — skip all metric+commit pairs from the first scan
+	// Second scan — skip all metric+hash+commit triples from the first scan
 	var skipKeys []MeasuredKey
 	for _, r := range firstResults {
-		skipKeys = append(skipKeys, MeasuredKey{MetricID: r.MetricID, Commit: r.Commit})
+		skipKeys = append(skipKeys, MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit})
 	}
 	var secondResults []Result
 	err = Scan(context.Background(), cfg, repo, ScanOptions{AlreadyMeasured: skipKeys}, func(r Result) {
@@ -167,6 +167,48 @@ func TestScan_SkipsAlreadyMeasured(t *testing.T) {
 	}
 	if len(secondResults) != 0 {
 		t.Errorf("expected 0 results after skipping all, got %d", len(secondResults))
+	}
+}
+
+func TestScan_RemeasuresOnHashChange(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfg := makeTestConfig()
+
+	// First scan — collect all results
+	var firstResults []Result
+	err := Scan(context.Background(), cfg, repo, ScanOptions{}, func(r Result) {
+		firstResults = append(firstResults, r)
+	})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if len(firstResults) == 0 {
+		t.Fatal("expected results from first scan")
+	}
+
+	// Build skip keys from first scan
+	var skipKeys []MeasuredKey
+	for _, r := range firstResults {
+		skipKeys = append(skipKeys, MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit})
+	}
+
+	// Change the metric config (different pattern → different hash)
+	cfg.Metrics[0].Runner.Config = map[string]any{"pattern": "@new/"}
+
+	// Second scan with old skip keys — should re-measure because hash changed
+	var secondResults []Result
+	err = Scan(context.Background(), cfg, repo, ScanOptions{AlreadyMeasured: skipKeys}, func(r Result) {
+		secondResults = append(secondResults, r)
+	})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	if len(secondResults) != len(firstResults) {
+		t.Errorf("expected %d results after hash change, got %d", len(firstResults), len(secondResults))
+	}
+	// Verify the new results have a different hash
+	if len(secondResults) > 0 && secondResults[0].MetricHash == firstResults[0].MetricHash {
+		t.Error("expected different metric hash after config change")
 	}
 }
 

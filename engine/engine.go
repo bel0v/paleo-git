@@ -15,8 +15,9 @@ import (
 )
 
 type MeasuredKey struct {
-	MetricID string
-	Commit   string
+	MetricID   string
+	MetricHash string
+	Commit     string
 }
 
 type ScanOptions struct {
@@ -173,7 +174,7 @@ func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOpti
 		var tasks []scanTask
 		for _, c := range commits {
 			for i := range resolved {
-				if skip[MeasuredKey{MetricID: resolved[i].metric.ID, Commit: c.SHA}] {
+				if skip[MeasuredKey{MetricID: resolved[i].metric.ID, MetricHash: resolved[i].hash, Commit: c.SHA}] {
 					continue
 				}
 				tasks = append(tasks, scanTask{

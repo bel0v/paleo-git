@@ -151,10 +151,10 @@ func readSkipFile(path string) ([]engine.MeasuredKey, error) {
 		if r.Commit == "" {
 			continue
 		}
-		key := r.MetricID + ":" + r.Commit
+		key := r.MetricID + ":" + r.MetricHash + ":" + r.Commit
 		if !seen[key] {
 			seen[key] = true
-			keys = append(keys, engine.MeasuredKey{MetricID: r.MetricID, Commit: r.Commit})
+			keys = append(keys, engine.MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit})
 		}
 	}
 	if err := scanner.Err(); err != nil {
