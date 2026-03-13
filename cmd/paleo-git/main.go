@@ -55,6 +55,14 @@ func loadConfig(path string) (config.Config, error) {
 	return cfg, nil
 }
 
+func openStoreDir(path string) (store.Dir, error) {
+	d, err := store.NewDir(path)
+	if err != nil {
+		return store.Dir{}, fmt.Errorf("invalid data directory: %w", err)
+	}
+	return d, nil
+}
+
 func measureCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "measure",
@@ -67,6 +75,8 @@ func measureCmd() *cobra.Command {
 			saveDir, _ := cmd.Flags().GetString("save-dir")
 			quiet, _ := cmd.Flags().GetBool("quiet")
 
+			ctx := cmd.Context()
+
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {
 				return err
@@ -75,7 +85,11 @@ func measureCmd() *cobra.Command {
 			// Build skip set from existing data
 			skip := make(map[engine.MeasuredKey]bool)
 			if loadDir != "" {
-				keys, err := store.Dir{Path: loadDir}.AlreadyMeasured()
+				d, err := openStoreDir(loadDir)
+				if err != nil {
+					return err
+				}
+				keys, err := d.AlreadyMeasured(ctx)
 				if err != nil {
 					return fmt.Errorf("loading data: %w", err)
 				}
@@ -84,7 +98,7 @@ func measureCmd() *cobra.Command {
 				}
 			}
 
-			results, err := engine.Measure(cmd.Context(), cfg, repoPath, commitRef)
+			results, err := engine.Measure(ctx, cfg, repoPath, commitRef)
 			if err != nil {
 				return err
 			}
@@ -99,15 +113,19 @@ func measureCmd() *cobra.Command {
 			}
 
 			if !quiet {
-				out, err := json.MarshalIndent(results, "", "  ")
+				out, err := json.MarshalIndent(newResults, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshalling results: %w", err)
 				}
-				fmt.Fprintln(os.Stdout, string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			}
 
 			if saveDir != "" && len(newResults) > 0 {
-				if err := (store.Dir{Path: saveDir}).Append(newResults); err != nil {
+				d, err := openStoreDir(saveDir)
+				if err != nil {
+					return err
+				}
+				if err := d.Append(ctx, newResults); err != nil {
 					return fmt.Errorf("saving results: %w", err)
 				}
 			}
@@ -140,6 +158,9 @@ func scanCmd() *cobra.Command {
 			repoPath, _ := cmd.Flags().GetString("repo")
 			quiet, _ := cmd.Flags().GetBool("quiet")
 
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+
 			cfg, err := loadConfig(cfgPath)
 			if err != nil {
 				return err
@@ -147,7 +168,11 @@ func scanCmd() *cobra.Command {
 
 			var opts engine.ScanOptions
 			if loadDir != "" {
-				keys, err := store.Dir{Path: loadDir}.AlreadyMeasured()
+				d, err := openStoreDir(loadDir)
+				if err != nil {
+					return err
+				}
+				keys, err := d.AlreadyMeasured(ctx)
 				if err != nil {
 					return fmt.Errorf("loading data: %w", err)
 				}
@@ -156,14 +181,14 @@ func scanCmd() *cobra.Command {
 
 			var toSave []engine.Result
 
-			err = engine.Scan(cmd.Context(), cfg, repoPath, opts, func(r engine.Result) {
+			err = engine.Scan(ctx, cfg, repoPath, opts, func(r engine.Result) {
 				if !quiet {
 					line, err := json.Marshal(r)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "marshal error: %v\n", err)
+						fmt.Fprintf(cmd.ErrOrStderr(), "marshal error: %v\n", err)
 						return
 					}
-					fmt.Fprintln(os.Stdout, string(line))
+					fmt.Fprintln(out, string(line))
 				}
 				if saveDir != "" {
 					toSave = append(toSave, r)
@@ -174,7 +199,11 @@ func scanCmd() *cobra.Command {
 			}
 
 			if saveDir != "" && len(toSave) > 0 {
-				if err := (store.Dir{Path: saveDir}).Append(toSave); err != nil {
+				d, err := openStoreDir(saveDir)
+				if err != nil {
+					return err
+				}
+				if err := d.Append(ctx, toSave); err != nil {
 					return fmt.Errorf("saving results: %w", err)
 				}
 			}

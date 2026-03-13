@@ -66,7 +66,6 @@ func gitRun(ctx context.Context, args ...string) ([]byte, error) {
 type CommitMeta struct {
 	SHA        string
 	AuthorDate time.Time
-	Order      int
 }
 
 // ResolveCommit returns metadata for a single commit ref.
@@ -124,7 +123,6 @@ func ListCommits(ctx context.Context, repoPath, start, end string, firstParent b
 
 	var all []CommitMeta
 	scanner := bufio.NewScanner(bytes.NewReader(out))
-	order := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		// rev-list --format outputs alternating "commit <sha>" and "<sha> <date>" lines
@@ -133,14 +131,13 @@ func ListCommits(ctx context.Context, repoPath, start, end string, firstParent b
 		}
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) != 2 {
-			continue
+			return nil, fmt.Errorf("unexpected rev-list line: %q", line)
 		}
 		t, err := time.Parse(time.RFC3339, parts[1])
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("parsing author date in rev-list output: %w", err)
 		}
-		order++
-		all = append(all, CommitMeta{SHA: parts[0], AuthorDate: t, Order: order})
+		all = append(all, CommitMeta{SHA: parts[0], AuthorDate: t})
 	}
 
 	if every <= 1 {
@@ -174,7 +171,7 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		return 0, nil, err
 	}
 
-	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-c", "-e", pattern, commit}
+	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-c", "-z", "-e", pattern, commit}
 	if len(includePaths) > 0 || len(excludePaths) > 0 {
 		args = append(args, "--")
 		args = append(args, includePaths...)
@@ -202,24 +199,24 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		return 0, nil, gitError(args, stderrStr, err)
 	}
 
+	// With -z, output uses NUL as field separator: "commit\0path\0count\n"
+	// This handles file paths containing colons correctly.
 	count := 0
 	var files []string
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Format: "<commit>:<path>:<count>" or "<path>:<count>"
-		// With commit ref it's "abc123:src/file.ts:2"
-		parts := strings.Split(line, ":")
+		parts := strings.Split(line, "\x00")
 		if len(parts) < 2 {
-			continue
+			return 0, nil, fmt.Errorf("unexpected git grep output: %q", line)
 		}
 		countStr := parts[len(parts)-1]
 		n, err := strconv.Atoi(countStr)
 		if err != nil {
-			continue
+			return 0, nil, fmt.Errorf("parsing match count: %w", err)
 		}
 		// File path is between commit ref and count
-		filePath := strings.Join(parts[1:len(parts)-1], ":")
+		filePath := strings.Join(parts[1:len(parts)-1], "\x00")
 		count += n
 		files = append(files, filePath)
 	}

@@ -24,14 +24,19 @@ type ScanOptions struct {
 	AlreadyMeasured []MeasuredKey
 }
 
+// builtinRunners maps runner names to factory functions.
+// Add new built-in runners here.
+var builtinRunners = map[string]func() runner.Runner{
+	"git_grep_count": func() runner.Runner { return gitgrep.New() },
+}
+
 func resolveRunner(ref config.RunnerRef) (runner.Runner, error) {
 	if ref.Builtin != "" {
-		switch ref.Builtin {
-		case "git_grep_count":
-			return gitgrep.New(), nil
-		default:
+		factory, ok := builtinRunners[ref.Builtin]
+		if !ok {
 			return nil, fmt.Errorf("unknown builtin runner: %q", ref.Builtin)
 		}
+		return factory(), nil
 	}
 	if len(ref.Exec) > 0 {
 		return runnerexec.New(ref.Exec), nil
@@ -251,11 +256,12 @@ func runTasks(ctx context.Context, tasks []scanTask, repoPath string, onResult f
 	}()
 
 	// Feed tasks to workers. Respects ctx so we don't block on a full channel.
+loop:
 	for _, t := range tasks {
 		select {
 		case taskCh <- t:
 		case <-ctx.Done():
-			break
+			break loop
 		}
 	}
 	close(taskCh)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +15,21 @@ import (
 
 // Dir provides read/write access to a data directory of metrics/*.jsonl files.
 type Dir struct {
-	Path string
+	path string
+}
+
+// NewDir creates a Dir for the given data directory path.
+func NewDir(path string) (Dir, error) {
+	if path == "" {
+		return Dir{}, fmt.Errorf("store: data directory path must not be empty")
+	}
+	return Dir{path: path}, nil
 }
 
 // Read returns all results for a single metric. Returns an empty slice
 // (not an error) if the file does not exist.
-func (d Dir) Read(metricID string) ([]engine.Result, error) {
-	f, err := os.Open(filepath.Join(d.Path, "metrics", metricID+".jsonl"))
+func (d Dir) Read(ctx context.Context, metricID string) ([]engine.Result, error) {
+	f, err := os.Open(filepath.Join(d.path, "metrics", metricID+".jsonl"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -32,6 +41,9 @@ func (d Dir) Read(metricID string) ([]engine.Result, error) {
 	var results []engine.Result
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
@@ -50,8 +62,8 @@ func (d Dir) Read(metricID string) ([]engine.Result, error) {
 
 // AlreadyMeasured reads all metric files and returns deduplicated
 // (MetricID, MetricHash, Commit) keys for use as a skip list.
-func (d Dir) AlreadyMeasured() ([]engine.MeasuredKey, error) {
-	pattern := filepath.Join(d.Path, "metrics", "*.jsonl")
+func (d Dir) AlreadyMeasured(ctx context.Context) ([]engine.MeasuredKey, error) {
+	pattern := filepath.Join(d.path, "metrics", "*.jsonl")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("globbing metrics: %w", err)
@@ -61,8 +73,11 @@ func (d Dir) AlreadyMeasured() ([]engine.MeasuredKey, error) {
 	var keys []engine.MeasuredKey
 
 	for _, path := range matches {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		metricID := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-		results, err := d.Read(metricID)
+		results, err := d.Read(ctx, metricID)
 		if err != nil {
 			return nil, err
 		}
@@ -80,18 +95,21 @@ func (d Dir) AlreadyMeasured() ([]engine.MeasuredKey, error) {
 // Append groups results by MetricID and appends each to its
 // corresponding metrics/{metric_id}.jsonl file, creating the
 // directory and file if needed.
-func (d Dir) Append(results []engine.Result) error {
+func (d Dir) Append(ctx context.Context, results []engine.Result) error {
 	grouped := make(map[string][]engine.Result)
 	for _, r := range results {
 		grouped[r.MetricID] = append(grouped[r.MetricID], r)
 	}
 
-	metricsDir := filepath.Join(d.Path, "metrics")
+	metricsDir := filepath.Join(d.path, "metrics")
 	if err := os.MkdirAll(metricsDir, 0o755); err != nil {
 		return fmt.Errorf("creating metrics directory: %w", err)
 	}
 
 	for metricID, batch := range grouped {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err := appendToFile(filepath.Join(metricsDir, metricID+".jsonl"), batch); err != nil {
 			return err
 		}
@@ -99,12 +117,16 @@ func (d Dir) Append(results []engine.Result) error {
 	return nil
 }
 
-func appendToFile(path string, results []engine.Result) error {
+func appendToFile(path string, results []engine.Result) (retErr error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", filepath.Base(path), err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing %s: %w", filepath.Base(path), closeErr)
+		}
+	}()
 
 	for _, r := range results {
 		line, err := json.Marshal(r)

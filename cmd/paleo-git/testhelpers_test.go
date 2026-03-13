@@ -2,36 +2,19 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"testing"
 )
 
-// captureOutput captures stdout during fn execution.
-func captureOutput(t *testing.T, fn func()) string {
+// captureOutput runs the CLI with the given args and returns stdout.
+// Uses cobra's SetOut to capture output without touching os.Stdout.
+func captureOutput(t *testing.T, args ...string) string {
 	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stdout = w
-
-	fn()
-
-	w.Close()
-	os.Stdout = old
-
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	return buf.String()
-}
-
-// runCLI executes the CLI with the given args in-process.
-func runCLI(t *testing.T, args ...string) {
-	t.Helper()
 	cmd := buildRootCmd()
+	cmd.SetOut(&buf)
 	cmd.SetArgs(args)
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("CLI error: %v", err)
 	}
+	return buf.String()
 }
