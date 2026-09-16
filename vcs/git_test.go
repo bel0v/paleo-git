@@ -63,6 +63,34 @@ func TestGrepCount_ReturnsCorrectCount(t *testing.T) {
 	}
 }
 
+func TestGrepCount_ReturnsRepoRelativeFilePaths(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	meta, err := ResolveCommit(context.Background(), repo, "HEAD")
+	if err != nil {
+		t.Fatalf("ResolveCommit error: %v", err)
+	}
+
+	// git grep echoes the commit back as the "<commit>:" prefix of every
+	// record, whether it was given as a symbolic ref or a full SHA. Neither
+	// form may leak into the returned file paths.
+	for _, ref := range []string{"HEAD", meta.SHA} {
+		_, files, err := GrepCount(context.Background(), repo, ref, "@legacy/", nil, nil)
+		if err != nil {
+			t.Fatalf("GrepCount(%s) error: %v", ref, err)
+		}
+		want := map[string]bool{"src/a.ts": true, "src/b.ts": true, "test/d.test.ts": true}
+		if len(files) != len(want) {
+			t.Fatalf("GrepCount(%s): expected %d files, got %d: %q", ref, len(want), len(files), files)
+		}
+		for _, f := range files {
+			if !want[f] {
+				t.Errorf("GrepCount(%s): unexpected file path %q", ref, f)
+			}
+		}
+	}
+}
+
 func TestGrepCount_RespectsPathFilter(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 

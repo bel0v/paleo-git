@@ -199,26 +199,25 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		return 0, nil, gitError(args, stderrStr, err)
 	}
 
-	// With -z, output uses NUL as field separator: "commit\0path\0count\n"
-	// This handles file paths containing colons correctly.
+	// With -z, each record is "<commit>:<path>\0<count>\n": the path is
+	// NUL-terminated instead of colon-terminated, so paths containing colons
+	// stay unambiguous. The commit is echoed back exactly as it was passed.
+	prefix := commit + ":"
 	count := 0
 	var files []string
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.Split(line, "\x00")
-		if len(parts) < 2 {
+		path, countStr, ok := strings.Cut(line, "\x00")
+		if !ok {
 			return 0, nil, fmt.Errorf("unexpected git grep output: %q", line)
 		}
-		countStr := parts[len(parts)-1]
 		n, err := strconv.Atoi(countStr)
 		if err != nil {
 			return 0, nil, fmt.Errorf("parsing match count: %w", err)
 		}
-		// File path is between commit ref and count
-		filePath := strings.Join(parts[1:len(parts)-1], "\x00")
 		count += n
-		files = append(files, filePath)
+		files = append(files, strings.TrimPrefix(path, prefix))
 	}
 	return count, files, nil
 }
