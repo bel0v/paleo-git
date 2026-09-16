@@ -132,6 +132,77 @@ func TestGrepCount_RespectsExcludeFilter(t *testing.T) {
 	}
 }
 
+func TestListFiles_ReturnsAllFilesUnderPathspec(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	files, err := ListFiles(context.Background(), repo, "HEAD", nil, nil)
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	want := map[string]bool{"src/a.ts": true, "src/b.ts": true, "src/c.tsx": true, "test/d.test.ts": true}
+	if len(files) != len(want) {
+		t.Fatalf("expected %d files, got %d: %q", len(want), len(files), files)
+	}
+	for _, f := range files {
+		if !want[f] {
+			t.Errorf("unexpected file path %q", f)
+		}
+	}
+}
+
+func TestListFiles_RespectsIncludeExcludeAndGlobs(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	files, err := ListFiles(context.Background(), repo, "HEAD", []string{"src/"}, nil)
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Errorf("include src/: expected 3 files, got %d: %q", len(files), files)
+	}
+
+	files, err = ListFiles(context.Background(), repo, "HEAD", nil, []string{"test/"})
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Errorf("exclude test/: expected 3 files, got %d: %q", len(files), files)
+	}
+
+	files, err = ListFiles(context.Background(), repo, "HEAD", []string{":(glob)**/*.tsx"}, nil)
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	if len(files) != 1 || files[0] != "src/c.tsx" {
+		t.Errorf("glob *.tsx: expected [src/c.tsx], got %q", files)
+	}
+}
+
+func TestListFiles_NoFilesReturnsEmpty(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+
+	files, err := ListFiles(context.Background(), repo, "HEAD", []string{"nonexistent/"}, nil)
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("expected no files, got %q", files)
+	}
+}
+
+func TestListFiles_IncludesEmptyFiles(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	testutil.CommitFile(t, repo, "src/empty.ts", "")
+
+	files, err := ListFiles(context.Background(), repo, "HEAD", []string{"src/empty.ts"}, nil)
+	if err != nil {
+		t.Fatalf("ListFiles error: %v", err)
+	}
+	if len(files) != 1 || files[0] != "src/empty.ts" {
+		t.Errorf("expected [src/empty.ts], got %q", files)
+	}
+}
+
 func TestResolveCommit_ReturnsMetadata(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 

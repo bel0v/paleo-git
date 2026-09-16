@@ -10,6 +10,7 @@ import (
 	"github.com/bel0v/paleo-git/config"
 	"github.com/bel0v/paleo-git/runner"
 	runnerexec "github.com/bel0v/paleo-git/runner/exec"
+	"github.com/bel0v/paleo-git/runner/gitfilecount"
 	"github.com/bel0v/paleo-git/runner/gitgrep"
 	"github.com/bel0v/paleo-git/vcs"
 )
@@ -33,6 +34,7 @@ type ScanOptions struct {
 // Add new built-in runners here.
 var builtinRunners = map[string]func() runner.Runner{
 	"git_grep_count": func() runner.Runner { return gitgrep.New() },
+	"git_file_count": func() runner.Runner { return gitfilecount.New() },
 }
 
 func resolveRunner(ref config.RunnerRef) (runner.Runner, error) {

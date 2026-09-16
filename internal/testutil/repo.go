@@ -26,34 +26,8 @@ func CreateFixtureRepo(t *testing.T) string {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command(args[0], args[1:]...)
-		cmd.Dir = repoDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-			"GIT_CONFIG_GLOBAL=/dev/null",
-			"GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("command %v failed: %v\n%s", args, err, out)
-		}
-	}
-
-	write := func(relPath, content string) {
-		t.Helper()
-		absPath := filepath.Join(repoDir, relPath)
-		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-	}
+	run := func(args ...string) { t.Helper(); runGit(t, repoDir, args...) }
+	write := func(relPath, content string) { t.Helper(); writeFile(t, repoDir, relPath, content) }
 
 	run("git", "init")
 	run("git", "checkout", "-b", "main")
@@ -84,4 +58,42 @@ func CreateFixtureRepo(t *testing.T) string {
 	run("git", "commit", "-m", "Add test file with legacy import")
 
 	return repoDir
+}
+
+// CommitFile writes a file into an existing fixture repo and commits it on
+// top of HEAD.
+func CommitFile(t *testing.T, repoDir, relPath, content string) {
+	t.Helper()
+	writeFile(t, repoDir, relPath, content)
+	runGit(t, repoDir, "git", "add", ".")
+	runGit(t, repoDir, "git", "commit", "-m", "Add "+relPath)
+}
+
+func runGit(t *testing.T, repoDir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func writeFile(t *testing.T, repoDir, relPath, content string) {
+	t.Helper()
+	absPath := filepath.Join(repoDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 }

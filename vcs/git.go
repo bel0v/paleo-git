@@ -146,7 +146,7 @@ func ListCommits(ctx context.Context, repoPath, start, end string, firstParent b
 
 	var sampled []CommitMeta
 	for i, c := range all {
-		if i%(every) == 0 {
+		if i%every == 0 {
 			sampled = append(sampled, c)
 		}
 	}
@@ -172,31 +172,11 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 	}
 
 	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-c", "-z", "-e", pattern, commit}
-	if len(includePaths) > 0 || len(excludePaths) > 0 {
-		args = append(args, "--")
-		args = append(args, includePaths...)
-		for _, ex := range excludePaths {
-			args = append(args, ":!"+ex)
-		}
-	}
+	args = appendPathspec(args, includePaths, excludePaths)
 
-	cmd := exec.CommandContext(ctx, "git", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := gitGrep(ctx, args)
 	if err != nil {
-		if ctx.Err() != nil {
-			return 0, nil, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
-		}
-		// git grep exits 1 when no matches found
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return 0, nil, nil
-		}
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "cannot use Perl") || strings.Contains(stderrStr, "PCRE") {
-			return 0, nil, fmt.Errorf("git grep -P (Perl regex) not supported; install git with PCRE support (e.g. brew install git)")
-		}
-		return 0, nil, gitError(args, stderrStr, err)
+		return 0, nil, err
 	}
 
 	// With -z, each record is "<commit>:<path>\0<count>\n": the path is
@@ -220,4 +200,75 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		files = append(files, strings.TrimPrefix(path, prefix))
 	}
 	return count, files, nil
+}
+
+// ListFiles returns the paths of all files at a commit that fall under
+// includePaths and outside excludePaths.
+//
+// It runs `git grep -L` with a pattern that can never match, so every file
+// under the pathspec is reported as "unmatched" — including empty and binary
+// files. git grep is used instead of ls-tree because it is the only tree
+// listing command that honours the full pathspec syntax (":(glob)" etc.),
+// keeping include/exclude semantics identical to GrepCount.
+func ListFiles(ctx context.Context, repoPath, commit string, includePaths, excludePaths []string) ([]string, error) {
+	if err := validateRepoPath(repoPath); err != nil {
+		return nil, err
+	}
+	if err := validateRef(commit, "commit"); err != nil {
+		return nil, err
+	}
+
+	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-L", "-z", "-e", "(?!)", commit}
+	args = appendPathspec(args, includePaths, excludePaths)
+
+	out, err := gitGrep(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// With -L -z, each record is "<commit>:<path>\0".
+	prefix := commit + ":"
+	var files []string
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		files = append(files, strings.TrimPrefix(record, prefix))
+	}
+	return files, nil
+}
+
+func appendPathspec(args, includePaths, excludePaths []string) []string {
+	if len(includePaths) == 0 && len(excludePaths) == 0 {
+		return args
+	}
+	args = append(args, "--")
+	args = append(args, includePaths...)
+	for _, ex := range excludePaths {
+		args = append(args, ":!"+ex)
+	}
+	return args
+}
+
+// gitGrep runs a git grep invocation. Exit status 1 (nothing reported) yields
+// empty output and no error.
+func gitGrep(ctx context.Context, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil, nil
+		}
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "cannot use Perl") || strings.Contains(stderrStr, "PCRE") {
+			return nil, fmt.Errorf("git grep -P (Perl regex) not supported; install git with PCRE support (e.g. brew install git)")
+		}
+		return nil, gitError(args, stderrStr, err)
+	}
+	return out, nil
 }

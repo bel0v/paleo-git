@@ -153,10 +153,10 @@ metrics:
     description: <string>     # Optional human description
     traversal: <name>         # Required: which traversal to use
     paths:
-      include: [<globs>]      # Required: file patterns to search
-      exclude: [<globs>]      # Optional: patterns to exclude
+      include: [<pathspecs>]  # Required: git pathspecs to search (use ":(glob)" for "**")
+      exclude: [<pathspecs>]  # Optional: pathspecs to exclude
     runner:
-      builtin: git_grep_count # OR exec: [<command>, <args>...]
+      builtin: git_grep_count # OR git_file_count, OR exec: [<command>, <args>...]
       config:                  # Runner-specific config (opaque)
         pattern: "..."
 ```
@@ -195,6 +195,22 @@ pattern: "\\.jsx?\\b"
 Requires git compiled with PCRE support (default on macOS and most Linux distros).
 
 Returns: match count and list of files with matches.
+
+### `git_file_count`
+
+Counts files at a commit that fall under `paths.include` and outside
+`paths.exclude`. Takes no config. Empty and binary files are counted too.
+
+```yaml
+- id: vanilla-extract-stylesheets
+  traversal: default
+  paths:
+    include: [":(glob)src/**/*.css.ts"]
+  runner:
+    builtin: git_file_count
+```
+
+Returns: file count and the list of files.
 
 ## Writing external runners
 
