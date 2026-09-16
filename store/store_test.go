@@ -122,6 +122,25 @@ func TestAlreadyMeasured_ReadsAllMetricFiles(t *testing.T) {
 	}
 }
 
+func TestAlreadyMeasured_ExcludesErrorResults(t *testing.T) {
+	dir := t.TempDir()
+	failed := makeResult("metric-a", "hash-a", "commit1", 0)
+	failed.Status = engine.StatusError
+	failed.Error = "boom"
+	writeFixtureFile(t, dir, "metric-a", []engine.Result{
+		failed,
+		makeResult("metric-a", "hash-a", "commit2", 20),
+	})
+
+	keys, err := NewDir(dir).AlreadyMeasured(context.Background())
+	if err != nil {
+		t.Fatalf("AlreadyMeasured error: %v", err)
+	}
+	if len(keys) != 1 || keys[0].Commit != "commit2" {
+		t.Fatalf("expected only the ok result as a skip key, got %+v", keys)
+	}
+}
+
 func TestAlreadyMeasured_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	d := NewDir(dir)

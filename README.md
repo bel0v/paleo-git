@@ -119,6 +119,18 @@ paleo-git scan --config <file> [--repo <path>] [--load-dir <dir>] [--save-dir <d
 
 Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
 
+### Failures and exit codes
+
+A metric that fails at a commit (runner error, git error) produces a result
+with `"status": "error"` and an `error` message; other metrics and commits
+are still measured. Both commands print one line per failure to stderr,
+even with `--quiet`, and exit non-zero if anything failed. Results are
+saved before the exit code is decided, so a failed CI run keeps its
+successful measurements.
+
+Error results in the data directory do not count as measured: the next
+run with `--load-dir` retries them.
+
 ## Data directory
 
 When using `--save-dir`, results are stored as NDJSON files organized by metric ID:
@@ -146,7 +158,9 @@ traversals:
       end: "HEAD" # End ref (inclusive)
     mode: first_parent # Traversal mode (first_parent only for now)
     sampling:
-      every: 25 # Stride: 1 = every commit, 10 = every 10th
+      every: 25 # Stride: 1 = every commit, 10 = every 10th. Counted from
+                # range.start, so pin start to a SHA to keep sampled
+                # commits stable between scans.
 
 metrics:
   - id: <string> # Unique identifier (no slashes or path separators)

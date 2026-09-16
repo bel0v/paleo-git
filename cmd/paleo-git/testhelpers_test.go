@@ -5,16 +5,25 @@ import (
 	"testing"
 )
 
-// captureOutput runs the CLI with the given args and returns stdout.
-// Uses cobra's SetOut to capture output without touching os.Stdout.
+// runCLI runs the CLI with the given args and returns stdout, stderr and
+// the execution error, without touching the process streams.
+func runCLI(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	cmd := buildRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return out.String(), errBuf.String(), err
+}
+
+// captureOutput runs the CLI and returns stdout, failing the test on error.
 func captureOutput(t *testing.T, args ...string) string {
 	t.Helper()
-	var buf bytes.Buffer
-	cmd := buildRootCmd()
-	cmd.SetOut(&buf)
-	cmd.SetArgs(args)
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("CLI error: %v", err)
+	stdout, stderr, err := runCLI(t, args...)
+	if err != nil {
+		t.Fatalf("CLI error: %v\nstderr: %s", err, stderr)
 	}
-	return buf.String()
+	return stdout
 }

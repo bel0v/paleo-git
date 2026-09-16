@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/bel0v/paleo-git/runner"
@@ -72,7 +73,7 @@ func (e *ExecRunner) Run(ctx context.Context, req runner.RunRequest) (*runner.Ru
 		return nil, fmt.Errorf("exec runner: timeout: %w", ctx.Err())
 	}
 	if err != nil {
-		return nil, fmt.Errorf("exec runner: command failed (exit %v): %s", err, stderr.String())
+		return nil, fmt.Errorf("exec runner: command failed (%v): %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	var out output

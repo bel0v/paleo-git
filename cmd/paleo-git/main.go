@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,7 @@ import (
 	"github.com/bel0v/paleo-git/config"
 	"github.com/bel0v/paleo-git/engine"
 	"github.com/bel0v/paleo-git/store"
+	"github.com/bel0v/paleo-git/vcs"
 )
 
 var (
@@ -26,10 +28,11 @@ func main() {
 
 func buildRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:          "paleo-git",
-		Short:        "Track code migration progress in git repositories",
-		Version:      fmt.Sprintf("%s (%s)", version, commit),
-		SilenceUsage: true,
+		Use:           "paleo-git",
+		Short:         "Track code migration progress in git repositories",
+		Version:       fmt.Sprintf("%s (%s)", version, commit),
+		SilenceUsage:  true,
+		SilenceErrors: true, // main prints the error once
 	}
 
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "Suppress stdout output")
@@ -55,6 +58,30 @@ func loadConfig(path string) (config.Config, error) {
 	return cfg, nil
 }
 
+// reportFailures prints every failed result to w and returns an error
+// summarising them, so failures reach the caller even with --quiet.
+func reportFailures(w io.Writer, results []engine.Result) error {
+	failed := 0
+	for _, r := range results {
+		if r.Status == engine.StatusError {
+			failed++
+			fmt.Fprintln(w, failureLine(r))
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d metric(s) failed", failed, len(results))
+	}
+	return nil
+}
+
+func failureLine(r engine.Result) string {
+	commit := r.Commit
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	return fmt.Sprintf("error: %s at %s: %s", r.MetricID, commit, r.Error)
+}
+
 func measureCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "measure",
@@ -74,52 +101,54 @@ func measureCmd() *cobra.Command {
 				return err
 			}
 
-			// Build skip set from existing data
-			skip := make(map[engine.MeasuredKey]bool)
+			meta, err := vcs.ResolveCommit(ctx, repoPath, commitRef)
+			if err != nil {
+				return fmt.Errorf("resolving commit %q: %w", commitRef, err)
+			}
+
+			// Drop metrics already measured at this commit so they are neither
+			// re-run nor re-appended.
 			if loadDir != "" {
 				keys, err := store.NewDir(loadDir).AlreadyMeasured(ctx)
 				if err != nil {
 					return fmt.Errorf("loading data: %w", err)
 				}
+				skip := make(map[engine.MeasuredKey]bool, len(keys))
 				for _, k := range keys {
 					skip[k] = true
 				}
+				pending := make([]config.Metric, 0, len(cfg.Metrics))
+				for _, m := range cfg.Metrics {
+					if !skip[engine.MeasuredKey{MetricID: m.ID, MetricHash: config.MetricHash(m), Commit: meta.SHA}] {
+						pending = append(pending, m)
+					}
+				}
+				cfg.Metrics = pending
 			}
 
-			results, err := engine.Measure(ctx, cfg, repoPath, commitRef)
+			results, err := engine.Measure(ctx, cfg, repoPath, meta.SHA)
 			if err != nil {
 				return err
 			}
-
-			// Filter out already-measured results
-			newResults := make([]engine.Result, 0, len(results))
-			for _, r := range results {
-				k := engine.MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit}
-				if !skip[k] {
-					newResults = append(newResults, r)
-				}
+			if results == nil {
+				results = []engine.Result{}
 			}
 
 			if !quiet {
-				out, err := json.MarshalIndent(newResults, "", "  ")
+				out, err := json.MarshalIndent(results, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshalling results: %w", err)
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			}
 
-			if saveDir != "" && len(newResults) > 0 {
-				if err := store.NewDir(saveDir).Append(ctx, newResults); err != nil {
+			if saveDir != "" && len(results) > 0 {
+				if err := store.NewDir(saveDir).Append(ctx, results); err != nil {
 					return fmt.Errorf("saving results: %w", err)
 				}
 			}
 
-			for _, r := range results {
-				if r.Status == engine.StatusError {
-					return fmt.Errorf("one or more metrics failed")
-				}
-			}
-			return nil
+			return reportFailures(cmd.ErrOrStderr(), results)
 		},
 	}
 	cmd.Flags().String("config", "", "Path to config file (required)")
@@ -165,6 +194,7 @@ func scanCmd() *cobra.Command {
 			}
 
 			var saveErr error
+			var failed []engine.Result
 			err = engine.Scan(ctx, cfg, repoPath, opts, func(r engine.Result) {
 				if !quiet {
 					line, err := json.Marshal(r)
@@ -174,6 +204,9 @@ func scanCmd() *cobra.Command {
 					}
 					fmt.Fprintln(out, string(line))
 				}
+				if r.Status == engine.StatusError {
+					failed = append(failed, r)
+				}
 				if saveDir != "" && saveErr == nil {
 					saveErr = saveStore.Append(ctx, []engine.Result{r})
 				}
@@ -181,8 +214,17 @@ func scanCmd() *cobra.Command {
 			if saveErr != nil {
 				return fmt.Errorf("saving results: %w", saveErr)
 			}
+			if err != nil {
+				return err
+			}
 
-			return err
+			for _, r := range failed {
+				fmt.Fprintln(cmd.ErrOrStderr(), failureLine(r))
+			}
+			if len(failed) > 0 {
+				return fmt.Errorf("%d measurement(s) failed", len(failed))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().String("config", "", "Path to config file (required)")

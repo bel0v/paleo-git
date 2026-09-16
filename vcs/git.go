@@ -50,17 +50,28 @@ func gitError(args []string, stderr string, err error) error {
 // gitRun executes a git command and returns stdout. If the command fails,
 // the error includes stderr for actionable diagnostics.
 func gitRun(ctx context.Context, args ...string) ([]byte, error) {
+	out, _, err := runGit(ctx, args, false)
+	return out, err
+}
+
+// runGit executes git. With tolerateExit1, an exit status of 1 is reported
+// through the returned bool with nil output and no error: git grep uses it
+// to mean "nothing found".
+func runGit(ctx context.Context, args []string, tolerateExit1 bool) (out []byte, nothingFound bool, err error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
-		}
-		return nil, gitError(args, stderr.String(), err)
+	out, err = cmd.Output()
+	if err == nil {
+		return out, false, nil
 	}
-	return out, nil
+	if ctx.Err() != nil {
+		return nil, false, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 && tolerateExit1 {
+		return nil, true, nil
+	}
+	return nil, false, gitError(args, stderr.String(), err)
 }
 
 type CommitMeta struct {
@@ -253,22 +264,13 @@ func appendPathspec(args, includePaths, excludePaths []string) []string {
 // gitGrep runs a git grep invocation. Exit status 1 (nothing reported) yields
 // empty output and no error.
 func gitGrep(ctx context.Context, args []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, _, err := runGit(ctx, args, true)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
-		}
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil, nil
-		}
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "cannot use Perl") || strings.Contains(stderrStr, "PCRE") {
+		msg := err.Error()
+		if strings.Contains(msg, "cannot use Perl") || strings.Contains(msg, "PCRE") {
 			return nil, fmt.Errorf("git grep -P (Perl regex) not supported; install git with PCRE support (e.g. brew install git)")
 		}
-		return nil, gitError(args, stderrStr, err)
+		return nil, err
 	}
 	return out, nil
 }

@@ -73,7 +73,9 @@ func (d Dir) Read(ctx context.Context, metricID string) ([]engine.Result, error)
 }
 
 // AlreadyMeasured reads all metric files and returns deduplicated
-// (MetricID, MetricHash, Commit) keys for use as a skip list.
+// (MetricID, MetricHash, Commit) keys for use as a skip list. Results with
+// an error status are not included, so a failed measurement is retried on
+// the next run rather than becoming a permanent gap.
 func (d Dir) AlreadyMeasured(ctx context.Context) ([]engine.MeasuredKey, error) {
 	pattern := filepath.Join(d.path, "metrics", "*.jsonl")
 	matches, err := filepath.Glob(pattern)
@@ -94,6 +96,9 @@ func (d Dir) AlreadyMeasured(ctx context.Context) ([]engine.MeasuredKey, error) 
 			return nil, err
 		}
 		for _, r := range results {
+			if r.Status != engine.StatusOK {
+				continue
+			}
 			k := engine.MeasuredKey{MetricID: r.MetricID, MetricHash: r.MetricHash, Commit: r.Commit}
 			if !seen[k] {
 				seen[k] = true

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -131,7 +132,14 @@ func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOpti
 		byTraversal[m.Traversal] = append(byTraversal[m.Traversal], m)
 	}
 
-	for travName, metrics := range byTraversal {
+	travNames := make([]string, 0, len(byTraversal))
+	for name := range byTraversal {
+		travNames = append(travNames, name)
+	}
+	sort.Strings(travNames)
+
+	for _, travName := range travNames {
+		metrics := byTraversal[travName]
 		trav, ok := cfg.Traversals[travName]
 		if !ok {
 			return fmt.Errorf("traversal %q not found in config", travName)

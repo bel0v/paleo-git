@@ -42,6 +42,38 @@ metrics:
 	return path
 }
 
+// writeFlakyConfig returns a config whose single exec runner succeeds only
+// while the marker file exists.
+func writeFlakyConfig(t *testing.T, dir, marker string) string {
+	t.Helper()
+	cfg := `
+version: 1
+traversals:
+  default:
+    range:
+      start: "HEAD~2"
+      end: "HEAD"
+    mode: first_parent
+    sampling:
+      every: 1
+metrics:
+  - id: flaky
+    traversal: default
+    paths:
+      include: ["src/"]
+    runner:
+      exec:
+        - sh
+        - -c
+        - 'test -f "` + marker + `" && echo ''{"value": 1}'' || { echo boom >&2; exit 1; }'
+`
+	path := filepath.Join(dir, "flaky.yml")
+	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
 func readStore(t *testing.T, dataDir, metricID string) []engine.Result {
 	t.Helper()
 	results, err := store.NewDir(dataDir).Read(context.Background(), metricID)
@@ -247,6 +279,85 @@ func TestScanCmd_SaveDirQuiet(t *testing.T) {
 	saved := readStore(t, dataDir, "legacy-imports")
 	if len(saved) == 0 {
 		t.Error("expected saved results in data dir")
+	}
+}
+
+func TestMeasureCmd_FailureIsReportedDespiteQuiet(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfgPath := writeFlakyConfig(t, repo, filepath.Join(t.TempDir(), "absent"))
+
+	stdout, stderr, err := runCLI(t, "measure", "--config", cfgPath, "--repo", repo, "--quiet")
+	if err == nil {
+		t.Fatal("expected non-zero exit for failed metric")
+	}
+	if stdout != "" {
+		t.Errorf("expected no stdout with --quiet, got: %s", stdout)
+	}
+	if !strings.Contains(stderr, "flaky") || !strings.Contains(stderr, "boom") {
+		t.Errorf("stderr should name the metric and its error, got: %s", stderr)
+	}
+	if !strings.Contains(err.Error(), "1 of 1") {
+		t.Errorf("error should summarise failures, got: %v", err)
+	}
+}
+
+func TestMeasureCmd_RetriesAfterFailure(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	marker := filepath.Join(t.TempDir(), "healthy")
+	cfgPath := writeFlakyConfig(t, repo, marker)
+	dataDir := filepath.Join(t.TempDir(), "data")
+
+	// First run fails and the error result is saved.
+	if _, _, err := runCLI(t, "measure", "--config", cfgPath, "--repo", repo, "--save-dir", dataDir, "--quiet"); err == nil {
+		t.Fatal("expected first measure to fail")
+	}
+	if saved := readStore(t, dataDir, "flaky"); len(saved) != 1 || saved[0].Status != engine.StatusError {
+		t.Fatalf("expected one saved error result, got %+v", saved)
+	}
+
+	// Runner recovers: the commit must be measured again, not skipped.
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := captureOutput(t, "measure", "--config", cfgPath, "--repo", repo, "--load-dir", dataDir, "--save-dir", dataDir)
+
+	var results []engine.Result
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != engine.StatusOK {
+		t.Fatalf("expected one new ok result, got %+v", results)
+	}
+	saved := readStore(t, dataDir, "flaky")
+	if len(saved) != 2 || saved[1].Status != engine.StatusOK {
+		t.Fatalf("expected error row followed by ok row, got %+v", saved)
+	}
+
+	// Now measured: a further run is a no-op.
+	out = captureOutput(t, "measure", "--config", cfgPath, "--repo", repo, "--load-dir", dataDir, "--save-dir", dataDir)
+	if strings.TrimSpace(out) != "[]" {
+		t.Errorf("expected [] once measured, got: %s", out)
+	}
+}
+
+func TestScanCmd_FailuresExitNonZeroAndReachStderr(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfgPath := writeFlakyConfig(t, repo, filepath.Join(t.TempDir(), "absent"))
+	dataDir := filepath.Join(t.TempDir(), "data")
+
+	stdout, stderr, err := runCLI(t, "scan", "--config", cfgPath, "--repo", repo, "--save-dir", dataDir, "--quiet")
+	if err == nil {
+		t.Fatal("expected non-zero exit when measurements fail")
+	}
+	if stdout != "" {
+		t.Errorf("expected no stdout with --quiet, got: %s", stdout)
+	}
+	if strings.Count(stderr, "error: flaky at ") != 2 {
+		t.Errorf("expected one stderr line per failed commit (2), got:\n%s", stderr)
+	}
+	// Results are still persisted so the run's work is not lost.
+	if saved := readStore(t, dataDir, "flaky"); len(saved) != 2 {
+		t.Errorf("expected 2 saved results, got %d", len(saved))
 	}
 }
 
