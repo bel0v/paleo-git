@@ -74,7 +74,7 @@ metrics:
 	return path
 }
 
-func readStore(t *testing.T, dataDir, metricID string) []engine.Result {
+func readStore(t *testing.T, dataDir, metricID string) []store.Row {
 	t.Helper()
 	results, err := store.NewDir(dataDir).Read(context.Background(), metricID)
 	if err != nil {

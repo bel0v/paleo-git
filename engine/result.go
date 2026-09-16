@@ -10,7 +10,8 @@ const (
 
 // Result holds the outcome of running a single metric at a single commit.
 // Consumers should check Status before using Value — when Status is
-// StatusError, the Error field describes the failure.
+// StatusError, the Error field describes the failure. Files is carried
+// inline on stdout; the store replaces it with a content hash (store.Row).
 type Result struct {
 	MetricID   string    `json:"metric_id"`
 	MetricHash string    `json:"metric_hash"`

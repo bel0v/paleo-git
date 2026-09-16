@@ -133,16 +133,24 @@ run with `--load-dir` retries them.
 
 ## Data directory
 
-When using `--save-dir`, results are stored as NDJSON files organized by metric ID:
+When using `--save-dir`, results are stored as NDJSON files organized by metric ID, with file lists kept separately:
 
 ```
 paleo-data/
   metrics/
     legacy-imports.jsonl
     todo-count.jsonl
+  files/
+    3f2a9c...e1.json
 ```
 
-Each line is a JSON object with the same schema as the stdout output. Files are append-only — new measurements are added to the end.
+Each line in `metrics/` has the stdout schema except that `files` is replaced by `files_ref`, a content hash of the sorted file list:
+
+```json
+{"metric_id":"legacy-imports","metric_hash":"a1b2...","commit":"abc123...","author_date":"2025-03-10T14:30:00Z","value":42,"files_ref":"3f2a9c...e1","status":"ok","duration_ms":150}
+```
+
+`files/<files_ref>.json` holds that list as a sorted JSON array. File lists rarely change between neighbouring commits, so each distinct set is written once and shared by every row that measured it; rows with no files have no `files_ref`. Metric files are append-only — new measurements are added to the end.
 
 Use `--load-dir` to read existing results and skip re-measuring the same (metric_id, metric_hash, commit) triples. You can point both flags at the same directory for incremental scans.
 

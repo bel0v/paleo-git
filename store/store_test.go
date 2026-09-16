@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -232,6 +233,94 @@ func TestAppend_GroupsByMetricID(t *testing.T) {
 	}
 	if len(gotB) != 1 {
 		t.Fatalf("expected 1 result for metric-b, got %d", len(gotB))
+	}
+}
+
+func TestAppend_StoresEachFileSetOnce(t *testing.T) {
+	dir := t.TempDir()
+	d := NewDir(dir)
+	ctx := context.Background()
+
+	same1 := makeResult("m", "h", "commit1", 2)
+	same1.Files = []string{"src/b.ts", "src/a.ts"}
+	same2 := makeResult("m", "h", "commit2", 2)
+	same2.Files = []string{"src/a.ts", "src/b.ts"} // same set, different order
+	other := makeResult("m", "h", "commit3", 1)
+	other.Files = []string{"src/a.ts"}
+	none := makeResult("m", "h", "commit4", 0)
+
+	if err := d.Append(ctx, []engine.Result{same1, same2, other, none}); err != nil {
+		t.Fatalf("Append error: %v", err)
+	}
+
+	blobs, err := filepath.Glob(filepath.Join(dir, "files", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blobs) != 2 {
+		t.Fatalf("expected 2 file-set blobs, got %d: %v", len(blobs), blobs)
+	}
+
+	rows, err := d.Read(ctx, "m")
+	if err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(rows))
+	}
+	if rows[0].FilesRef == "" || rows[0].FilesRef != rows[1].FilesRef {
+		t.Errorf("identical sets should share a files_ref, got %q and %q", rows[0].FilesRef, rows[1].FilesRef)
+	}
+	if rows[2].FilesRef == rows[0].FilesRef {
+		t.Error("different sets must not share a files_ref")
+	}
+	if rows[3].FilesRef != "" {
+		t.Errorf("empty file list should have no files_ref, got %q", rows[3].FilesRef)
+	}
+	for i, r := range rows {
+		if r.Files != nil {
+			t.Errorf("row %d should not carry files inline, got %v", i, r.Files)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "metrics", "m.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"files":`) {
+		t.Error("metrics file must not contain inline files")
+	}
+
+	files, err := d.Files(ctx, rows[0].FilesRef)
+	if err != nil {
+		t.Fatalf("Files error: %v", err)
+	}
+	if len(files) != 2 || files[0] != "src/a.ts" || files[1] != "src/b.ts" {
+		t.Errorf("expected sorted [src/a.ts src/b.ts], got %v", files)
+	}
+}
+
+func TestFileSetHash_IsOrderIndependentAndContentSensitive(t *testing.T) {
+	a := FileSetHash([]string{"x", "y"})
+	b := FileSetHash([]string{"y", "x"})
+	c := FileSetHash([]string{"x"})
+	if a != b {
+		t.Errorf("order should not matter: %s != %s", a, b)
+	}
+	if a == c {
+		t.Error("different sets must hash differently")
+	}
+	if len(a) != 32 {
+		t.Errorf("expected 32 hex chars, got %d", len(a))
+	}
+}
+
+func TestFiles_RejectsInvalidRef(t *testing.T) {
+	d := NewDir(t.TempDir())
+	for _, ref := range []string{"", "..", "../x", "zz", "ABCDEF0123456789ABCDEF0123456789"} {
+		if _, err := d.Files(context.Background(), ref); err == nil {
+			t.Errorf("expected error for files_ref %q", ref)
+		}
 	}
 }
 
