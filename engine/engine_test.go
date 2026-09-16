@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bel0v/paleo-git/config"
@@ -73,6 +74,20 @@ func TestMeasure_ResolvesCommitMetadata(t *testing.T) {
 	}
 }
 
+func TestMeasure_RejectsUnknownBuiltin(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfg := makeTestConfig()
+	cfg.Metrics[0].Runner = config.RunnerRef{Builtin: "nonexistent_runner"}
+
+	_, err := Measure(context.Background(), cfg, repo, "HEAD")
+	if err == nil {
+		t.Fatal("expected error for unknown builtin runner")
+	}
+	if !strings.Contains(err.Error(), "nonexistent_runner") {
+		t.Errorf("error should name the runner, got: %v", err)
+	}
+}
+
 func TestMeasure_ContinuesPastFailingMetric(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 	cfg := config.Config{
@@ -86,10 +101,10 @@ func TestMeasure_ContinuesPastFailingMetric(t *testing.T) {
 		},
 		Metrics: []config.Metric{
 			{
-				ID:        "bad-runner",
+				ID:        "failing-runner",
 				Traversal: "default",
 				Paths:     config.Paths{Include: []string{"src/"}},
-				Runner:    config.RunnerRef{Builtin: "nonexistent_runner"},
+				Runner:    config.RunnerRef{Exec: []string{"sh", "-c", "echo boom >&2; exit 1"}},
 			},
 			{
 				ID:        "good-metric",

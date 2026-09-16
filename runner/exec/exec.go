@@ -19,6 +19,15 @@ func New(argv []string) *ExecRunner {
 	return &ExecRunner{argv: argv}
 }
 
+// Validate accepts any config: it is passed to the command verbatim as
+// PALEO_RUNNER_CONFIG and only the command knows what it expects.
+func (e *ExecRunner) Validate(config map[string]any) error {
+	if len(e.argv) == 0 || e.argv[0] == "" {
+		return fmt.Errorf("exec runner: command must not be empty")
+	}
+	return nil
+}
+
 type output struct {
 	Value int      `json:"value"`
 	Files []string `json:"files,omitempty"`

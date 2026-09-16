@@ -90,14 +90,14 @@ Run all metrics at a single commit.
 paleo-git measure --config <file> [--commit <ref>] [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | (required) | Path to YAML config |
-| `--commit` | `HEAD` | Commit to measure |
-| `--repo` | `.` | Path to git repository |
-| `--load-dir` | (none) | Load prior results to skip already-measured metrics |
-| `--save-dir` | (none) | Save new results to data directory |
-| `--quiet` | `false` | Suppress stdout output |
+| Flag         | Default    | Description                                         |
+| ------------ | ---------- | --------------------------------------------------- |
+| `--config`   | (required) | Path to YAML config                                 |
+| `--commit`   | `HEAD`     | Commit to measure                                   |
+| `--repo`     | `.`        | Path to git repository                              |
+| `--load-dir` | (none)     | Load prior results to skip already-measured metrics |
+| `--save-dir` | (none)     | Save new results to data directory                  |
+| `--quiet`    | `false`    | Suppress stdout output                              |
 
 Output: JSON array to stdout (unless `--quiet`). Only new results are printed — if `--load-dir` is set, already-measured results are excluded from output.
 
@@ -109,13 +109,13 @@ Traverse history and measure metrics at sampled commits.
 paleo-git scan --config <file> [--repo <path>] [--load-dir <dir>] [--save-dir <dir>] [--quiet]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | (required) | Path to YAML config |
-| `--repo` | `.` | Path to git repository |
-| `--load-dir` | (none) | Load prior results to skip already-measured commits |
-| `--save-dir` | (none) | Save results to data directory |
-| `--quiet` | `false` | Suppress stdout output |
+| Flag         | Default    | Description                                         |
+| ------------ | ---------- | --------------------------------------------------- |
+| `--config`   | (required) | Path to YAML config                                 |
+| `--repo`     | `.`        | Path to git repository                              |
+| `--load-dir` | (none)     | Load prior results to skip already-measured commits |
+| `--save-dir` | (none)     | Save results to data directory                      |
+| `--quiet`    | `false`    | Suppress stdout output                              |
 
 Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
 
@@ -137,34 +137,37 @@ Use `--load-dir` to read existing results and skip re-measuring the same (metric
 ## Config reference
 
 ```yaml
-version: 1                    # Config schema version
+version: 1 # Config schema version
 
 traversals:
-  <name>:                     # Named traversal (referenced by metrics)
+  <name>: # Named traversal (referenced by metrics)
     range:
-      start: "main~500"      # Start ref (exclusive)
-      end: "HEAD"             # End ref (inclusive)
-    mode: first_parent        # Traversal mode (first_parent only for now)
+      start: "main~500" # Start ref (exclusive)
+      end: "HEAD" # End ref (inclusive)
+    mode: first_parent # Traversal mode (first_parent only for now)
     sampling:
-      every: 25               # Stride: 1 = every commit, 10 = every 10th
+      every: 25 # Stride: 1 = every commit, 10 = every 10th
 
 metrics:
-  - id: <string>              # Unique identifier (no slashes or path separators)
-    description: <string>     # Optional human description
-    traversal: <name>         # Required: which traversal to use
+  - id: <string> # Unique identifier (no slashes or path separators)
+    description: <string> # Optional human description
+    traversal: <name> # Required: which traversal to use
     paths:
-      include: [<pathspecs>]  # Required: git pathspecs to search (use ":(glob)" for "**")
-      exclude: [<pathspecs>]  # Optional: pathspecs to exclude
+      include: [<pathspecs>] # Required: git pathspecs to search (use ":(glob)" for "**")
+      exclude: [<pathspecs>] # Optional: pathspecs to exclude
     runner:
       builtin: git_grep_count # OR git_file_count, OR exec: [<command>, <args>...]
-      config:                  # Runner-specific config (opaque)
+      config: # Runner-specific config (opaque)
         pattern: "..."
 ```
 
-Validation rules:
+Validation rules (checked at load time, before anything is measured):
+
 - Metric IDs must be unique
 - Each metric must reference an existing traversal
 - Runner must specify exactly one of `builtin` or `exec`
+- `builtin` must name a known runner, and its `config` must satisfy that
+  runner.
 - `paths.include` must not be empty
 - `sampling.every` must be at least 1
 
@@ -175,9 +178,11 @@ Validation rules:
 Counts lines matching a regex at a commit using `git grep -P` (Perl-compatible regex).
 
 Config:
+
 - `pattern` (required): Perl regex pattern to match
 
 Pattern examples:
+
 ```yaml
 # Simple string match
 pattern: "from '@legacy/"
@@ -226,7 +231,7 @@ An external runner is any executable that:
 2. Prints a single JSON line to stdout:
 
 ```json
-{"value": 42, "files": ["src/old.ts", "src/legacy.ts"]}
+{ "value": 42, "files": ["src/old.ts", "src/legacy.ts"] }
 ```
 
 `value` is required (integer). `files` is optional.
@@ -238,6 +243,7 @@ Exit code 0 = success. Non-zero = error (stderr is captured).
 paleo-git is a **stateless engine library** with a thin CLI wrapper. It does not persist results, compare values, or render dashboards — those are consumer concerns.
 
 Designed to serve three consumers:
+
 - **CLI** (this tool) — wraps the engine, outputs to stdout
 - **GitHub Action** (separate repo) — CI integration with persistence and PR comments
 - **Web Dashboard** (separate repo) — trends, file-level detail, migration overview

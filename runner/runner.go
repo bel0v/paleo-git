@@ -3,6 +3,9 @@ package runner
 import "context"
 
 type Runner interface {
+	// Validate checks a metric's runner config at config load time, before
+	// any commit is measured.
+	Validate(config map[string]any) error
 	Run(ctx context.Context, req RunRequest) (*RunResult, error)
 }
 

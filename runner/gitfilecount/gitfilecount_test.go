@@ -45,6 +45,19 @@ func TestGitFileCount_RespectsExclude(t *testing.T) {
 	}
 }
 
+func TestGitFileCount_ValidateRejectsConfig(t *testing.T) {
+	r := New()
+	if err := r.Validate(nil); err != nil {
+		t.Errorf("nil config: unexpected error: %v", err)
+	}
+	if err := r.Validate(map[string]any{}); err != nil {
+		t.Errorf("empty config: unexpected error: %v", err)
+	}
+	if err := r.Validate(map[string]any{"pattern": "x"}); err == nil {
+		t.Error("expected error for unexpected config field")
+	}
+}
+
 func TestGitFileCount_NoFilesReturnsZero(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 

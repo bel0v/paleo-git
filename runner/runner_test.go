@@ -7,6 +7,8 @@ var _ Runner = (*mockRunner)(nil)
 
 type mockRunner struct{}
 
+func (m *mockRunner) Validate(config map[string]any) error { return nil }
+
 func (m *mockRunner) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	return &RunResult{Value: 1, Files: []string{"a.go"}}, nil
 }

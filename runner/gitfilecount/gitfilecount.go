@@ -15,6 +15,13 @@ func New() *GitFileCount {
 	return &GitFileCount{}
 }
 
+func (g *GitFileCount) Validate(config map[string]any) error {
+	if len(config) > 0 {
+		return fmt.Errorf("git_file_count: takes no config, got %d field(s)", len(config))
+	}
+	return nil
+}
+
 func (g *GitFileCount) Run(ctx context.Context, req runner.RunRequest) (*runner.RunResult, error) {
 	files, err := vcs.ListFiles(ctx, req.RepoPath, req.Commit, req.PathsInclude, req.PathsExclude)
 	if err != nil {

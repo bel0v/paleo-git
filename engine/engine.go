@@ -9,9 +9,6 @@ import (
 
 	"github.com/bel0v/paleo-git/config"
 	"github.com/bel0v/paleo-git/runner"
-	runnerexec "github.com/bel0v/paleo-git/runner/exec"
-	"github.com/bel0v/paleo-git/runner/gitfilecount"
-	"github.com/bel0v/paleo-git/runner/gitgrep"
 	"github.com/bel0v/paleo-git/vcs"
 )
 
@@ -30,62 +27,30 @@ type ScanOptions struct {
 	AlreadyMeasured []MeasuredKey
 }
 
-// builtinRunners maps runner names to factory functions.
-// Add new built-in runners here.
-var builtinRunners = map[string]func() runner.Runner{
-	"git_grep_count": func() runner.Runner { return gitgrep.New() },
-	"git_file_count": func() runner.Runner { return gitfilecount.New() },
-}
-
-func resolveRunner(ref config.RunnerRef) (runner.Runner, error) {
-	if ref.Builtin != "" {
-		factory, ok := builtinRunners[ref.Builtin]
-		if !ok {
-			return nil, fmt.Errorf("unknown builtin runner: %q", ref.Builtin)
-		}
-		return factory(), nil
-	}
-	if len(ref.Exec) > 0 {
-		return runnerexec.New(ref.Exec), nil
-	}
-	return nil, fmt.Errorf("runner must specify builtin or exec")
-}
-
 // resolvedMetric holds a pre-resolved runner and hash for a metric,
 // avoiding repeated resolution and hashing in the hot loop.
-// If err is non-nil, the runner could not be resolved.
 type resolvedMetric struct {
 	metric config.Metric
 	runner runner.Runner
 	hash   string
-	err    error
 }
 
-func resolveMetrics(metrics []config.Metric) []resolvedMetric {
+// resolveMetrics instantiates each metric's runner. Runner configs are
+// expected to have been validated with config.Validate; an unresolvable
+// runner here is a programming error, not a per-commit measurement failure.
+func resolveMetrics(metrics []config.Metric) ([]resolvedMetric, error) {
 	resolved := make([]resolvedMetric, len(metrics))
 	for i, m := range metrics {
-		r, err := resolveRunner(m.Runner)
-		resolved[i] = resolvedMetric{
-			metric: m,
-			runner: r,
-			hash:   config.MetricHash(m),
-			err:    err,
+		r, err := config.ResolveRunner(m.Runner)
+		if err != nil {
+			return nil, fmt.Errorf("metric %q: %w", m.ID, err)
 		}
+		resolved[i] = resolvedMetric{metric: m, runner: r, hash: config.MetricHash(m)}
 	}
-	return resolved
+	return resolved, nil
 }
 
 func runResolved(ctx context.Context, rm *resolvedMetric, repoPath, commit string) Result {
-	if rm.err != nil {
-		return Result{
-			MetricID:   rm.metric.ID,
-			MetricHash: rm.hash,
-			Commit:     commit,
-			Status:     StatusError,
-			Error:      rm.err.Error(),
-		}
-	}
-
 	start := time.Now()
 
 	res, err := rm.runner.Run(ctx, runner.RunRequest{
@@ -129,7 +94,10 @@ func Measure(ctx context.Context, cfg config.Config, repoPath, commit string) ([
 		return nil, fmt.Errorf("resolving commit %q: %w", commit, err)
 	}
 
-	resolved := resolveMetrics(cfg.Metrics)
+	resolved, err := resolveMetrics(cfg.Metrics)
+	if err != nil {
+		return nil, err
+	}
 
 	var results []Result
 	for i := range resolved {
@@ -169,7 +137,10 @@ func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOpti
 			return fmt.Errorf("traversal %q not found in config", travName)
 		}
 
-		resolved := resolveMetrics(metrics)
+		resolved, err := resolveMetrics(metrics)
+		if err != nil {
+			return err
+		}
 
 		firstParent := trav.Mode == "first_parent"
 		every := trav.Sampling.Every

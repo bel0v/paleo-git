@@ -26,6 +26,15 @@ metrics:
         pattern: "from '@legacy/"
 `
 
+func mustParse(t *testing.T, yaml string) Config {
+	t.Helper()
+	cfg, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	return cfg
+}
+
 func TestParseConfig_MinimalValidConfig(t *testing.T) {
 	cfg, err := Parse([]byte(minimalValidYAML))
 	if err != nil {
@@ -369,6 +378,93 @@ metrics:
 	}
 	if !strings.Contains(err.Error(), "sampling.every") {
 		t.Errorf("expected error to reference sampling.every, got: %v", err)
+	}
+}
+
+func TestValidateConfig_RejectsUnknownBuiltin(t *testing.T) {
+	cfg := mustParse(t, `
+version: 1
+traversals:
+  default:
+    range: { start: "HEAD~10", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 1 }
+metrics:
+  - id: m
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_grep_cuont
+      config: { pattern: "foo" }
+`)
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for unknown builtin")
+	}
+	if !strings.Contains(err.Error(), "git_grep_cuont") || !strings.Contains(err.Error(), "git_grep_count") {
+		t.Errorf("error should name the bad runner and list supported ones, got: %v", err)
+	}
+}
+
+func TestValidateConfig_RunnerConfigIsChecked(t *testing.T) {
+	cases := map[string]string{
+		"grep without pattern": `
+      builtin: git_grep_count`,
+		"file_count with config": `
+      builtin: git_file_count
+      config: { pattern: "foo" }`,
+		"exec with empty command": `
+      exec: [""]`,
+	}
+	for name, runnerYAML := range cases {
+		cfg := mustParse(t, `
+version: 1
+traversals:
+  default:
+    range: { start: "HEAD~10", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 1 }
+metrics:
+  - id: m
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:`+runnerYAML+`
+`)
+		if err := Validate(cfg); err == nil {
+			t.Errorf("%s: expected validation error", name)
+		}
+	}
+}
+
+func TestValidateConfig_AcceptsAllBuiltins(t *testing.T) {
+	cfg := mustParse(t, `
+version: 1
+traversals:
+  default:
+    range: { start: "HEAD~10", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 1 }
+metrics:
+  - id: grep
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_grep_count
+      config: { pattern: "foo" }
+  - id: files
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_file_count
+  - id: ext
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      exec: ["node", "check.js"]
+      config: { anything: true }
+`)
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
 

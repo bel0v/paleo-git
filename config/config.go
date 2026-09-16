@@ -5,6 +5,10 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/bel0v/paleo-git/runner"
+	"github.com/bel0v/paleo-git/runner/builtins"
+	runnerexec "github.com/bel0v/paleo-git/runner/exec"
 )
 
 type Config struct {
@@ -94,11 +98,15 @@ func Validate(cfg Config) error {
 
 		hasBuiltin := m.Runner.Builtin != ""
 		hasExec := len(m.Runner.Exec) > 0
-		if hasBuiltin && hasExec {
+		switch {
+		case hasBuiltin && hasExec:
 			errs = append(errs, fmt.Sprintf("metrics[%d].runner: must specify exactly one of builtin or exec, not both", i))
-		}
-		if !hasBuiltin && !hasExec {
+		case !hasBuiltin && !hasExec:
 			errs = append(errs, fmt.Sprintf("metrics[%d].runner: must specify exactly one of builtin or exec", i))
+		default:
+			if err := validateRunner(m.Runner); err != nil {
+				errs = append(errs, fmt.Sprintf("metrics[%d].runner: %v", i, err))
+			}
 		}
 
 		if len(m.Paths.Include) == 0 {
@@ -110,4 +118,28 @@ func Validate(cfg Config) error {
 		return fmt.Errorf("config validation errors:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return nil
+}
+
+// ResolveRunner instantiates the runner a metric refers to. The RunnerRef
+// must have passed Validate.
+func ResolveRunner(ref RunnerRef) (runner.Runner, error) {
+	if ref.Builtin != "" {
+		r, ok := builtins.New(ref.Builtin)
+		if !ok {
+			return nil, fmt.Errorf("unknown builtin runner %q (supported: %s)", ref.Builtin, strings.Join(builtins.Names(), ", "))
+		}
+		return r, nil
+	}
+	if len(ref.Exec) > 0 {
+		return runnerexec.New(ref.Exec), nil
+	}
+	return nil, fmt.Errorf("runner must specify builtin or exec")
+}
+
+func validateRunner(ref RunnerRef) error {
+	r, err := ResolveRunner(ref)
+	if err != nil {
+		return err
+	}
+	return r.Validate(ref.Config)
 }

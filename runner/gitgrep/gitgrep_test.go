@@ -49,6 +49,29 @@ func TestGitGrepCount_RespectsPathsFilter(t *testing.T) {
 	}
 }
 
+func TestGitGrepCount_Validate(t *testing.T) {
+	r := New()
+	cases := map[string]struct {
+		config map[string]any
+		ok     bool
+	}{
+		"valid":         {map[string]any{"pattern": "foo"}, true},
+		"missing":       {map[string]any{}, false},
+		"empty":         {map[string]any{"pattern": ""}, false},
+		"not a string":  {map[string]any{"pattern": 42}, false},
+		"unknown field": {map[string]any{"pattern": "foo", "flags": "i"}, false},
+	}
+	for name, tc := range cases {
+		err := r.Validate(tc.config)
+		if tc.ok && err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
 func TestGitGrepCount_MissingPatternReturnsError(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
