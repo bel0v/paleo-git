@@ -14,6 +14,7 @@ import (
 // flagsWithValue lists git global flags that consume the next argument.
 var flagsWithValue = map[string]bool{
 	"-C":             true,
+	"-c":             true,
 	"--git-dir":      true,
 	"--work-tree":    true,
 	"--namespace":    true,
@@ -182,7 +183,7 @@ func GrepCount(ctx context.Context, repoPath, commit, pattern string, includePat
 		return 0, nil, err
 	}
 
-	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-c", "-z", "-e", pattern, commit}
+	args := grepArgs(repoPath, "-c", "-e", pattern, commit)
 	args = appendPathspec(args, includePaths, excludePaths)
 
 	out, err := gitGrep(ctx, args)
@@ -229,7 +230,7 @@ func ListFiles(ctx context.Context, repoPath, commit string, includePaths, exclu
 		return nil, err
 	}
 
-	args := []string{"-C", repoPath, "--no-pager", "grep", "-P", "-L", "-z", "-e", "(?!)", commit}
+	args := grepArgs(repoPath, "-L", "-e", "(?!)", commit)
 	args = appendPathspec(args, includePaths, excludePaths)
 
 	out, err := gitGrep(ctx, args)
@@ -247,6 +248,14 @@ func ListFiles(ctx context.Context, repoPath, commit string, includePaths, exclu
 		files = append(files, strings.TrimPrefix(record, prefix))
 	}
 	return files, nil
+}
+
+// grepArgs builds a git grep invocation. grep.threads is pinned to 1: the
+// engine already runs one git process per CPU, and git's own default of 8
+// threads per process oversubscribes the machine (40% slower on a full scan).
+func grepArgs(repoPath string, extra ...string) []string {
+	args := []string{"-C", repoPath, "--no-pager", "-c", "grep.threads=1", "grep", "-P", "-z"}
+	return append(args, extra...)
 }
 
 func appendPathspec(args, includePaths, excludePaths []string) []string {
