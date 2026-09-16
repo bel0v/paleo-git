@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sort"
@@ -27,6 +28,12 @@ type MeasuredKey struct {
 type ScanOptions struct {
 	AlreadyMeasured []MeasuredKey
 }
+
+// runnerTimeout bounds a single measurement so one hung runner (a stuck
+// external script, a pathological grep) cannot stall a scan or a CI job
+// indefinitely. Generous on purpose: a legitimate measurement on a large
+// repository takes seconds, not minutes.
+var runnerTimeout = 10 * time.Minute
 
 // resolvedMetric holds a pre-resolved runner and hash for a metric,
 // avoiding repeated resolution and hashing in the hot loop.
@@ -54,7 +61,10 @@ func resolveMetrics(metrics []config.Metric) ([]resolvedMetric, error) {
 func runResolved(ctx context.Context, rm *resolvedMetric, repoPath, commit string) Result {
 	start := time.Now()
 
-	res, err := rm.runner.Run(ctx, runner.RunRequest{
+	runCtx, cancel := context.WithTimeout(ctx, runnerTimeout)
+	defer cancel()
+
+	res, err := rm.runner.Run(runCtx, runner.RunRequest{
 		Commit:       commit,
 		RepoPath:     repoPath,
 		Config:       rm.metric.Runner.Config,
@@ -63,6 +73,12 @@ func runResolved(ctx context.Context, rm *resolvedMetric, repoPath, commit strin
 	})
 
 	duration := int(time.Since(start).Milliseconds())
+
+	// Only the per-run deadline is a measurement failure; a cancelled parent
+	// context means the whole scan is stopping and is reported as such.
+	if err != nil && ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("timed out after %s", runnerTimeout)
+	}
 
 	if err != nil {
 		return Result{

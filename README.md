@@ -121,9 +121,9 @@ Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
 
 ### Failures and exit codes
 
-A metric that fails at a commit (runner error, git error) produces a result
-with `"status": "error"` and an `error` message; other metrics and commits
-are still measured. Both commands print one line per failure to stderr,
+A metric that fails at a commit (runner error, git error, or exceeding the
+10-minute limit per measurement) produces a result with `"status": "error"`
+and an `error` message; other metrics and commits are still measured. Both commands print one line per failure to stderr,
 even with `--quiet`, and exit non-zero if anything failed. Results are
 saved before the exit code is decided, so a failed CI run keeps its
 successful measurements.

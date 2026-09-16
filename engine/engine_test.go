@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bel0v/paleo-git/config"
 	"github.com/bel0v/paleo-git/internal/testutil"
@@ -130,6 +131,43 @@ func TestMeasure_ContinuesPastFailingMetric(t *testing.T) {
 	}
 	if results[1].Status != StatusOK {
 		t.Errorf("expected second metric to have status ok, got %s", results[1].Status)
+	}
+}
+
+func TestMeasure_TimesOutHungRunner(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfg := makeTestConfig()
+	cfg.Metrics = append(cfg.Metrics, config.Metric{
+		ID:        "hung",
+		Traversal: "default",
+		Paths:     config.Paths{Include: []string{"src/"}},
+		Runner:    config.RunnerRef{Exec: []string{"sh", "-c", "sleep 30"}},
+	})
+
+	saved := runnerTimeout
+	runnerTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { runnerTimeout = saved })
+
+	start := time.Now()
+	results, err := Measure(context.Background(), cfg, repo, "HEAD")
+	if err != nil {
+		t.Fatalf("Measure error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("hung runner was not cut off: took %v", elapsed)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Status != StatusOK {
+		t.Errorf("healthy metric should still succeed, got %s: %s", results[0].Status, results[0].Error)
+	}
+	hung := results[1]
+	if hung.Status != StatusError {
+		t.Fatalf("expected hung metric to fail, got %s", hung.Status)
+	}
+	if !strings.Contains(hung.Error, "timed out after 200ms") {
+		t.Errorf("error should name the timeout, got: %s", hung.Error)
 	}
 }
 
