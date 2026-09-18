@@ -81,6 +81,9 @@ func (d Dir) Read(ctx context.Context, metricID string) ([]Row, error) {
 
 	var rows []Row
 	scanner := bufio.NewScanner(f)
+	// Rows are small, but a scanner's default 64 KiB line limit would turn an
+	// oversized one into an unhelpful "token too long".
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

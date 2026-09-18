@@ -106,14 +106,18 @@ func runResolved(ctx context.Context, rm *resolvedMetric, repoPath, commit strin
 }
 
 // Measure runs all metrics at a single commit and returns results.
-// The commit ref is resolved to its SHA and author date.
+// The commit ref is resolved to its SHA and commit date.
 // One metric's failure does not prevent others from running.
 func Measure(ctx context.Context, cfg config.Config, repoPath, commit string) ([]Result, error) {
 	meta, err := vcs.ResolveCommit(ctx, repoPath, commit)
 	if err != nil {
 		return nil, fmt.Errorf("resolving commit %q: %w", commit, err)
 	}
+	return MeasureAt(ctx, cfg, repoPath, meta)
+}
 
+// MeasureAt is Measure for a commit the caller has already resolved.
+func MeasureAt(ctx context.Context, cfg config.Config, repoPath string, meta vcs.CommitMeta) ([]Result, error) {
 	resolved, err := resolveMetrics(cfg.Metrics)
 	if err != nil {
 		return nil, err
@@ -122,7 +126,7 @@ func Measure(ctx context.Context, cfg config.Config, repoPath, commit string) ([
 	var results []Result
 	for i := range resolved {
 		r := runResolved(ctx, &resolved[i], repoPath, meta.SHA)
-		r.AuthorDate = meta.AuthorDate
+		r.CommitDate = meta.CommitDate
 		results = append(results, r)
 	}
 	return results, nil
@@ -138,7 +142,9 @@ type scanTask struct {
 // Scan traverses commits per traversal, runs matching metrics at each commit,
 // and calls onResult for each measurement. Metrics run concurrently across
 // commits using a bounded worker pool. Results stream to onResult in commit
-// order as they become ready.
+// order as they become ready. onResult is invoked from a single goroutine
+// that is not the caller's, one call at a time, so it may append to
+// caller-owned state without locking but must not block for long.
 func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOptions, onResult func(Result)) error {
 	skip := make(map[MeasuredKey]bool)
 	for _, k := range opts.AlreadyMeasured {
@@ -234,7 +240,7 @@ func runTasks(ctx context.Context, tasks []scanTask, repoPath string, onResult f
 					continue
 				}
 				r := runResolved(ctx, t.rm, repoPath, t.commit.SHA)
-				r.AuthorDate = t.commit.AuthorDate
+				r.CommitDate = t.commit.CommitDate
 				results[t.index] = r
 				close(ready[t.index])
 			}

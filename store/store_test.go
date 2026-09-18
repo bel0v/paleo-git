@@ -18,7 +18,7 @@ func makeResult(metricID, metricHash, commit string, value int) engine.Result {
 		MetricID:   metricID,
 		MetricHash: metricHash,
 		Commit:     commit,
-		AuthorDate: time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC),
+		CommitDate: time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC),
 		Value:      value,
 		Status:     engine.StatusOK,
 		DurationMs: 100,

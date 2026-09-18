@@ -21,9 +21,9 @@ func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 		t.Fatalf("expected at least 3 commits, got %d", len(commits))
 	}
 
-	// Verify order: oldest first (ascending author date)
+	// Verify order: oldest first (ascending commit date)
 	for i := 1; i < len(commits); i++ {
-		if commits[i].AuthorDate.Before(commits[i-1].AuthorDate) {
+		if commits[i].CommitDate.Before(commits[i-1].CommitDate) {
 			t.Errorf("commits not in ascending order at index %d", i)
 		}
 	}
@@ -214,8 +214,8 @@ func TestResolveCommit_ReturnsMetadata(t *testing.T) {
 	if len(meta.SHA) != 40 {
 		t.Errorf("expected 40-char SHA, got %q", meta.SHA)
 	}
-	if meta.AuthorDate.IsZero() {
-		t.Error("expected non-zero AuthorDate")
+	if meta.CommitDate.IsZero() {
+		t.Error("expected non-zero CommitDate")
 	}
 }
 
@@ -238,31 +238,37 @@ func TestListCommits_RespectsContextCancellation(t *testing.T) {
 	}
 }
 
-// datedRepo adds five commits with controlled author dates on top of the
-// fixture: two on Wed 2025-01-01, then 01-02 (Thu), 01-05 (Sun) and 01-06 (Mon,
-// the next ISO week). HEAD~5 is the last fixture commit.
+// datedRepo has five commits with controlled commit dates: two on Wed
+// 2025-01-01, then 01-02 (Thu), 01-05 (Sun) and 01-06 (Mon, the next ISO
+// week).
+var datedRepoDates = []string{
+	"2025-01-01T09:00:00Z", "2025-01-01T17:00:00Z", "2025-01-02T10:00:00Z",
+	"2025-01-05T10:00:00Z", "2025-01-06T10:00:00Z",
+}
+
 func datedRepo(t *testing.T) string {
-	repo := testutil.CreateFixtureRepo(t)
-	for i, date := range []string{
-		"2025-01-01T09:00:00Z", "2025-01-01T17:00:00Z", "2025-01-02T10:00:00Z",
-		"2025-01-05T10:00:00Z", "2025-01-06T10:00:00Z",
-	} {
-		testutil.CommitFileAt(t, repo, fmt.Sprintf("dated/%d.ts", i), date, date)
-	}
+	return testutil.CreateDatedRepo(t, datedRepoDates...)
+}
+
+// rebasedTipRepo is datedRepo plus a tip that was written on 2024-06-01 but
+// landed (committer date) on 2025-01-07, the shape a rebase-merge leaves.
+func rebasedTipRepo(t *testing.T) string {
+	repo := datedRepo(t)
+	testutil.CommitFileAtDates(t, repo, "dated/rebased.ts", "old", "2024-06-01T10:00:00Z", "2025-01-07T10:00:00Z")
 	return repo
 }
 
 func days(commits []CommitMeta) []string {
 	out := make([]string, len(commits))
 	for i, c := range commits {
-		out[i] = c.AuthorDate.UTC().Format("2006-01-02T15")
+		out[i] = c.CommitDate.UTC().Format("2006-01-02T15")
 	}
 	return out
 }
 
 func TestListCommits_DayBucketKeepsLatestCommitPerDay(t *testing.T) {
 	repo := datedRepo(t)
-	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "day", Every: 1})
+	got, err := ListCommits(context.Background(), repo, "", "HEAD", true, Sampling{Bucket: "day", Every: 1})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -274,7 +280,7 @@ func TestListCommits_DayBucketKeepsLatestCommitPerDay(t *testing.T) {
 
 func TestListCommits_WeekBucketFollowsISOWeeks(t *testing.T) {
 	repo := datedRepo(t)
-	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "week", Every: 1})
+	got, err := ListCommits(context.Background(), repo, "", "HEAD", true, Sampling{Bucket: "week", Every: 1})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -291,7 +297,7 @@ func TestListCommits_BucketStrideIsAnchoredToEpochNotRangeStart(t *testing.T) {
 	// 01-05 = 20093, 01-06 = 20094. every: 2 keeps even days; the tip is
 	// 01-06 and is even anyway.
 	want := []string{"2025-01-02T10", "2025-01-06T10"}
-	for _, start := range []string{"HEAD~5", "HEAD~4"} {
+	for _, start := range []string{"", "HEAD~4"} {
 		got, err := ListCommits(context.Background(), repo, start, "HEAD", true, Sampling{Bucket: "day", Every: 2})
 		if err != nil {
 			t.Fatalf("ListCommits error: %v", err)
@@ -304,14 +310,13 @@ func TestListCommits_BucketStrideIsAnchoredToEpochNotRangeStart(t *testing.T) {
 
 func TestListCommits_BucketAlwaysIncludesTip(t *testing.T) {
 	repo := datedRepo(t)
-	// Month buckets: everything is January 2025 -> one bucket, whose latest
-	// commit is already the tip. Then week/every:2: week of 01-06 has index
-	// (20094+3)/7 = 2871, odd, so it would be dropped without the tip rule.
-	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "week", Every: 2})
+	// The week of 01-06 has index (20094+3)/7 = 2871, odd, so with every: 2
+	// it would be dropped without the tip rule.
+	got, err := ListCommits(context.Background(), repo, "", "HEAD", true, Sampling{Bucket: "week", Every: 2})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
-	if last := got[len(got)-1].AuthorDate.UTC().Format("2006-01-02"); last != "2025-01-06" {
+	if last := got[len(got)-1].CommitDate.UTC().Format("2006-01-02"); last != "2025-01-06" {
 		t.Errorf("tip must always be included, last was %s", last)
 	}
 }
@@ -326,7 +331,7 @@ func TestListCommits_RejectsUnknownBucket(t *testing.T) {
 	}
 }
 
-func TestResolveStart_DateResolvesToLastCommitBeforeIt(t *testing.T) {
+func TestResolveStart_DateStartsTraversalAtFirstCommitOnOrAfterIt(t *testing.T) {
 	repo := datedRepo(t)
 	sha, err := ResolveStart(context.Background(), repo, "2025-01-05", "HEAD", true)
 	if err != nil {
@@ -336,7 +341,7 @@ func TestResolveStart_DateResolvesToLastCommitBeforeIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := meta.AuthorDate.UTC().Format("2006-01-02T15"); got != "2025-01-02T10" {
+	if got := meta.CommitDate.UTC().Format("2006-01-02T15"); got != "2025-01-02T10" {
 		t.Errorf("start before 2025-01-05 should be the 01-02 commit, got %s", got)
 	}
 	// The traversal then begins with the first commit on/after the date.
@@ -349,12 +354,55 @@ func TestResolveStart_DateResolvesToLastCommitBeforeIt(t *testing.T) {
 	}
 }
 
-func TestResolveStart_PassesRevisionsThroughAndRejectsTooEarlyDates(t *testing.T) {
+func TestResolveStart_UsesLandingDateNotAuthorDate(t *testing.T) {
+	repo := rebasedTipRepo(t)
+	// By author date the tip (2024-06-01) would be "the newest commit before
+	// 2025-01-05" and the traversal would be empty. By committer date the
+	// first commit on/after the day is 01-05, so the start is the 01-02
+	// commit before it.
+	sha, err := ResolveStart(context.Background(), repo, "2025-01-05", "HEAD", true)
+	if err != nil {
+		t.Fatalf("ResolveStart error: %v", err)
+	}
+	meta, err := ResolveCommit(context.Background(), repo, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := meta.CommitDate.UTC().Format("2006-01-02T15"); got != "2025-01-02T10" {
+		t.Errorf("start should be the 01-02 commit, got %s", got)
+	}
+}
+
+func TestListCommits_BucketsByLandingDate(t *testing.T) {
+	repo := rebasedTipRepo(t)
+	got, err := ListCommits(context.Background(), repo, "", "HEAD", true, Sampling{Bucket: "day", Every: 1})
+	if err != nil {
+		t.Fatalf("ListCommits error: %v", err)
+	}
+	// The rebased tip lands on 01-07 and is bucketed there, not on its
+	// 2024-06-01 author date; every day has exactly one pick.
+	want := []string{"2025-01-01T17", "2025-01-02T10", "2025-01-05T10", "2025-01-06T10", "2025-01-07T10"}
+	if fmt.Sprint(days(got)) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", days(got), want)
+	}
+}
+
+func TestListCommits_RejectsNonPositiveStride(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	if _, err := ListCommits(context.Background(), repo, "HEAD~1", "HEAD", true, Sampling{Bucket: "commit", Every: 0}); err == nil {
+		t.Fatal("expected error for every: 0")
+	}
+}
+
+func TestResolveStart_PassesRevisionsThroughAndHandlesOutOfRangeDates(t *testing.T) {
 	repo := datedRepo(t)
 	if got, err := ResolveStart(context.Background(), repo, "HEAD~3", "HEAD", true); err != nil || got != "HEAD~3" {
 		t.Errorf("revision should pass through, got %q, %v", got, err)
 	}
-	if _, err := ResolveStart(context.Background(), repo, "1990-01-01", "HEAD", true); err == nil {
-		t.Error("expected error when no commit precedes the date")
+	if got, err := ResolveStart(context.Background(), repo, "1990-01-01", "HEAD", true); err != nil || got != "" {
+		t.Errorf("a date before all commits should select the whole history (empty start), got %q, %v", got, err)
+	}
+	if _, err := ResolveStart(context.Background(), repo, "2999-01-01", "HEAD", true); err == nil {
+		t.Error("expected error when no commit is on or after the date")
 	}
 }

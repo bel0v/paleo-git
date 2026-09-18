@@ -23,11 +23,11 @@ binary for the runner, verifies its checksum, and adds it to `PATH`. The
 tag you reference is the version you get:
 
 ```yaml
-- uses: bel0v/paleo-git@v0.4.0
+- uses: bel0v/paleo-git@v0.5.0
 - run: paleo-git measure --config paleo.yml --load-dir data --save-dir data --quiet
 ```
 
-Inputs: `version` overrides the tag (`v0.4.0`, or `latest`). Outputs:
+Inputs: `version` overrides the tag (`v0.5.0`, or `latest`). Outputs:
 `version` and `path`. Linux and macOS runners, x64 and arm64. The binary is
 cached in the runner tool cache, so self-hosted runners download each
 version once.
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: bel0v/paleo-git@v0.4.0
+      - uses: bel0v/paleo-git@v0.5.0
       - name: Restore data from the last successful run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,6 +84,7 @@ traversals:
 metrics:
   - id: legacy-imports
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/*.ts"]
     runner:
@@ -106,7 +107,7 @@ This prints a JSON array of results for HEAD:
     "metric_id": "legacy-imports",
     "metric_hash": "a1b2c3d4e5f6...",
     "commit": "abc123...",
-    "author_date": "2025-03-10T14:30:00Z",
+    "commit_date": "2025-03-10T14:30:00Z",
     "value": 42,
     "files": ["src/old.ts", "src/legacy.ts"],
     "status": "ok",
@@ -127,7 +128,7 @@ Streams one NDJSON line per (metric, commit) pair and saves results to a data di
 paleo-git scan --config paleo.yml --load-dir ./paleo-data --save-dir ./paleo-data
 ```
 
-Already-measured (metric, config, commit) triples are skipped. If you change a metric's config (e.g. pattern), the new definition gets a different hash and all commits are re-measured for that metric.
+Already-measured (metric, config, commit) triples are skipped. If you change a metric's definition (its paths, runner, runner config, or the name of the traversal it uses), the new definition gets a different hash and all commits are re-measured for that metric. `description`, `output` and the traversal's own settings are not part of the hash.
 
 ## Commands
 
@@ -172,10 +173,10 @@ Output: NDJSON to stdout (one line per measurement, unless `--quiet`).
 
 A metric that fails at a commit (runner error, git error, or exceeding the
 10-minute limit per measurement) produces a result with `"status": "error"`
-and an `error` message; other metrics and commits are still measured. Both commands print one line per failure to stderr,
-even with `--quiet`, and exit non-zero if anything failed. Results are
-saved before the exit code is decided, so a failed CI run keeps its
-successful measurements.
+and an `error` message; other metrics and commits are still measured. Both
+commands print one line per failure to stderr, even with `--quiet`, and exit
+non-zero if anything failed. Results are saved before the exit code is
+decided, so a failed CI run keeps its successful measurements.
 
 Error results in the data directory do not count as measured: the next
 run with `--load-dir` retries them.
@@ -196,7 +197,7 @@ paleo-data/
 Each line in `metrics/` has the stdout schema except that `files` is replaced by `files_ref`, a content hash of the sorted file list:
 
 ```json
-{"metric_id":"legacy-imports","metric_hash":"a1b2...","commit":"abc123...","author_date":"2025-03-10T14:30:00Z","value":42,"files_ref":"3f2a9c...e1","status":"ok","duration_ms":150}
+{"metric_id":"legacy-imports","metric_hash":"a1b2...","commit":"abc123...","commit_date":"2025-03-10T14:30:00Z","value":42,"files_ref":"3f2a9c...e1","status":"ok","duration_ms":150}
 ```
 
 `files/<files_ref>.json` holds that list as a sorted JSON array. File lists rarely change between neighbouring commits, so each distinct set is written once and shared by every row that measured it; rows with no files have no `files_ref`. Metric files are append-only — new measurements are added to the end.
@@ -211,7 +212,7 @@ version: 1 # Config schema version
 traversals:
   <name>: # Named traversal (referenced by metrics)
     range:
-      start: "main~500" # Start ref (exclusive)
+      start: "main~500" # Start ref (exclusive), or a YYYY-MM-DD date (see Sampling)
       end: "HEAD" # End ref (inclusive)
     mode: first_parent # Traversal mode (first_parent only for now)
     sampling:
@@ -230,11 +231,11 @@ metrics:
       config: # Runner-specific config (opaque)
         pattern: "..."
     output:
-      files: list # Optional: list (default) emits matching paths, none drops them
+      files: list # Required: `list` emits matching paths, `none` drops them
 ```
 
 `output.files: none` is for metrics whose file list has no consumer: the
-value is measured exactly as before, but results carry no `files` and the
+value is measured exactly the same, but results carry no `files` and the
 data directory stores no file set for them. Changing it does not alter the
 metric hash, so toggling it never triggers a re-measure.
 
@@ -246,7 +247,7 @@ over it:
 | bucket | what is measured |
 |--------|------------------|
 | `commit` | every `every`-th first-parent commit, counted from `range.start` |
-| `day` / `week` / `month` | the latest-authored commit of every `every`-th UTC calendar day, ISO week (Monday-based) or month |
+| `day` / `week` / `month` | the last commit that landed in every `every`-th UTC calendar day, ISO week (Monday-based) or month |
 
 Calendar buckets are numbered from the Unix epoch, so `bucket: day, every: 2`
 picks the same days however `range.start` moves; a `commit` stride shifts with
@@ -254,18 +255,25 @@ the start unless it is pinned to a SHA. The last commit of the range is always
 included, whichever sampling is used.
 
 `range.start` and `range.end` are git revisions. `range.start` may instead be
-a `YYYY-MM-DD` date, resolved to the last first-parent commit authored before
-that day, so the traversal begins with the first commit on or after it.
+a `YYYY-MM-DD` date: the traversal then begins with the first first-parent
+commit that landed on or after that day, or with the first commit in history
+if every commit did.
+
+Dates throughout are git committer dates, when a commit reached the branch,
+not author dates: a commit rebased onto `main` a year after it was written
+counts on the day it landed, which is what a burn-down of `main` should show.
 
 Validation rules (checked at load time, before anything is measured):
 
 - Metric IDs must be unique
 - Each metric must reference an existing traversal
+- `range.start` and `range.end` are required; `mode` is required and must be
+  `first_parent`
 - Runner must specify exactly one of `builtin` or `exec`
 - `builtin` must name a known runner, and its `config` must satisfy that
   runner.
 - `paths.include` must not be empty
-- `output.files`, if set, must be `list` or `none`
+- `output.files` is required and must be `list` or `none`
 - `sampling.bucket` must be `commit`, `day`, `week` or `month`
 - `sampling.every` must be at least 1
 - `range.start`, if a date, must be a valid `YYYY-MM-DD`
@@ -324,6 +332,7 @@ Counts files at a commit that fall under `paths.include` and outside
 ```yaml
 - id: vanilla-extract-stylesheets
   traversal: default
+  output: { files: list }
   paths:
     include: ["src/*.css.ts"]
   runner:
@@ -351,7 +360,14 @@ An external runner is any executable that:
 
 `value` is required (integer). `files` is optional.
 
-Exit code 0 = success. Non-zero = error (stderr is captured).
+Exit code 0 = success. Non-zero = error (stderr is captured). Each run is
+bounded by the 10-minute limit; on Linux and macOS a timed-out runner is
+killed together with any child processes it started, on Windows only the
+runner process itself is killed.
+
+[examples/runners/count_imports.py](examples/runners/count_imports.py) is a
+complete runner that honours the paths and config the same way the built-in
+`git_grep_count` does.
 
 ## Architecture
 

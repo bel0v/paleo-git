@@ -24,6 +24,7 @@ func makeTestConfig() config.Config {
 			{
 				ID:        "legacy-imports",
 				Traversal: "default",
+				Output:    config.Output{Files: config.FilesList},
 				Paths:     config.Paths{Include: []string{"src/"}},
 				Runner: config.RunnerRef{
 					Builtin: "git_grep_count",
@@ -88,8 +89,8 @@ func TestMeasure_ResolvesCommitMetadata(t *testing.T) {
 		t.Fatalf("Measure error: %v", err)
 	}
 	r := results[0]
-	if r.AuthorDate.IsZero() {
-		t.Error("expected AuthorDate to be populated, got zero")
+	if r.CommitDate.IsZero() {
+		t.Error("expected CommitDate to be populated, got zero")
 	}
 	if len(r.Commit) != 40 {
 		t.Errorf("expected resolved SHA (40 hex chars), got %q", r.Commit)
@@ -125,12 +126,14 @@ func TestMeasure_ContinuesPastFailingMetric(t *testing.T) {
 			{
 				ID:        "failing-runner",
 				Traversal: "default",
+				Output:    config.Output{Files: config.FilesList},
 				Paths:     config.Paths{Include: []string{"src/"}},
 				Runner:    config.RunnerRef{Exec: []string{"sh", "-c", "echo boom >&2; exit 1"}},
 			},
 			{
 				ID:        "good-metric",
 				Traversal: "default",
+				Output:    config.Output{Files: config.FilesList},
 				Paths:     config.Paths{Include: []string{"src/"}},
 				Runner: config.RunnerRef{
 					Builtin: "git_grep_count",
@@ -161,6 +164,7 @@ func TestMeasure_TimesOutHungRunner(t *testing.T) {
 	cfg.Metrics = append(cfg.Metrics, config.Metric{
 		ID:        "hung",
 		Traversal: "default",
+		Output:    config.Output{Files: config.FilesList},
 		Paths:     config.Paths{Include: []string{"src/"}},
 		Runner:    config.RunnerRef{Exec: []string{"sh", "-c", "sleep 30"}},
 	})
@@ -300,12 +304,12 @@ func TestScan_ResultsInCommitOrder(t *testing.T) {
 	if len(results) < 2 {
 		t.Fatalf("need at least 2 results to verify order, got %d", len(results))
 	}
-	// Results should arrive in oldest-first order (ascending AuthorDate).
+	// Results should arrive in oldest-first order (ascending CommitDate).
 	for i := 1; i < len(results); i++ {
-		if results[i].AuthorDate.Before(results[i-1].AuthorDate) {
+		if results[i].CommitDate.Before(results[i-1].CommitDate) {
 			t.Errorf("result %d (commit %s, %v) is older than result %d (commit %s, %v)",
-				i, results[i].Commit[:8], results[i].AuthorDate,
-				i-1, results[i-1].Commit[:8], results[i-1].AuthorDate)
+				i, results[i].Commit[:8], results[i].CommitDate,
+				i-1, results[i-1].Commit[:8], results[i-1].CommitDate)
 		}
 	}
 }
@@ -330,6 +334,7 @@ func TestScan_DifferentTraversals(t *testing.T) {
 			{
 				ID:        "full-metric",
 				Traversal: "full",
+				Output:    config.Output{Files: config.FilesList},
 				Paths:     config.Paths{Include: []string{"src/"}},
 				Runner: config.RunnerRef{
 					Builtin: "git_grep_count",
@@ -339,6 +344,7 @@ func TestScan_DifferentTraversals(t *testing.T) {
 			{
 				ID:        "recent-metric",
 				Traversal: "recent",
+				Output:    config.Output{Files: config.FilesList},
 				Paths:     config.Paths{Include: []string{"src/"}},
 				Runner: config.RunnerRef{
 					Builtin: "git_grep_count",

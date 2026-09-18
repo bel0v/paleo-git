@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,12 +16,11 @@ import (
 
 // flagsWithValue lists git global flags that consume the next argument.
 var flagsWithValue = map[string]bool{
-	"-C":             true,
-	"-c":             true,
-	"--git-dir":      true,
-	"--work-tree":    true,
-	"--namespace":    true,
-	"--super-prefix": true,
+	"-C":          true,
+	"-c":          true,
+	"--git-dir":   true,
+	"--work-tree": true,
+	"--namespace": true,
 }
 
 // findSubcommand extracts the git subcommand from args, skipping known
@@ -53,33 +53,35 @@ func gitError(args []string, stderr string, err error) error {
 // gitRun executes a git command and returns stdout. If the command fails,
 // the error includes stderr for actionable diagnostics.
 func gitRun(ctx context.Context, args ...string) ([]byte, error) {
-	out, _, err := runGit(ctx, args, false)
-	return out, err
+	return runGit(ctx, args, false)
 }
 
-// runGit executes git. With tolerateExit1, an exit status of 1 is reported
-// through the returned bool with nil output and no error: git grep uses it
-// to mean "nothing found".
-func runGit(ctx context.Context, args []string, tolerateExit1 bool) (out []byte, nothingFound bool, err error) {
+// runGit executes git. With tolerateExit1, an exit status of 1 yields nil
+// output and no error: git grep uses it to mean "nothing found".
+func runGit(ctx context.Context, args []string, tolerateExit1 bool) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	out, err = cmd.Output()
+	out, err := cmd.Output()
 	if err == nil {
-		return out, false, nil
+		return out, nil
 	}
 	if ctx.Err() != nil {
-		return nil, false, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
+		return nil, fmt.Errorf("git %s: %w", findSubcommand(args), ctx.Err())
 	}
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 && tolerateExit1 {
-		return nil, true, nil
+		return nil, nil
 	}
-	return nil, false, gitError(args, stderr.String(), err)
+	return nil, gitError(args, stderr.String(), err)
 }
 
+// CommitMeta identifies a commit and when it landed on the traversed branch.
+// CommitDate is git's committer date: for a merge or a rebased commit that is
+// the moment it reached the branch, unlike the author date, which is when the
+// change was written and may be far older.
 type CommitMeta struct {
 	SHA        string
-	AuthorDate time.Time
+	CommitDate time.Time
 }
 
 // ResolveCommit returns metadata for a single commit ref.
@@ -91,7 +93,7 @@ func ResolveCommit(ctx context.Context, repoPath, ref string) (CommitMeta, error
 		return CommitMeta{}, err
 	}
 
-	out, err := gitRun(ctx, "-C", repoPath, "--no-pager", "log", "-1", "--format=%H %aI", ref)
+	out, err := gitRun(ctx, "-C", repoPath, "--no-pager", "log", "-1", "--format=%H %cI", ref)
 	if err != nil {
 		return CommitMeta{}, err
 	}
@@ -104,20 +106,20 @@ func ResolveCommit(ctx context.Context, repoPath, ref string) (CommitMeta, error
 
 	t, err := time.Parse(time.RFC3339, parts[1])
 	if err != nil {
-		return CommitMeta{}, fmt.Errorf("parsing author date: %w", err)
+		return CommitMeta{}, fmt.Errorf("parsing commit date: %w", err)
 	}
 
-	return CommitMeta{SHA: parts[0], AuthorDate: t}, nil
+	return CommitMeta{SHA: parts[0], CommitDate: t}, nil
 }
 
 // Sampling selects which commits of a traversal are measured.
 //
 // Bucket "commit" makes Every a stride over the commit list counted from the
 // range start (1 = every commit). Buckets "day", "week" and "month" are UTC
-// calendar buckets: the latest-authored commit of each is kept and Every
-// strides over buckets, counted from the Unix epoch so the chosen buckets do
-// not shift when the range start moves. The last commit of the range is
-// always included.
+// calendar buckets of the committer date: the last commit that landed in each
+// is kept and Every strides over buckets, counted from the Unix epoch so the
+// chosen buckets do not shift when the range start moves. The last commit of
+// the range is always included.
 type Sampling struct {
 	Bucket string
 	Every  int
@@ -133,9 +135,16 @@ func IsDate(s string) bool {
 }
 
 // ResolveStart turns a traversal start into a revision. A git revision is
-// returned unchanged; a YYYY-MM-DD date resolves to the last commit reachable
-// from end (first parents only when firstParent) authored before that day,
-// so the traversal (start, end] begins with the first commit on or after it.
+// returned unchanged; a YYYY-MM-DD date resolves to the commit just before
+// the first commit (in walk order, first parents only when firstParent) that
+// landed on or after that day, so the traversal (start, end] begins with that
+// first commit. If every commit landed on or after the day the result is "",
+// which ListCommits treats as "from the first commit".
+//
+// Committer dates on a first-parent walk are monotonic in practice, so the
+// oldest-first walk and "the newest commit before the day" agree; the walk
+// is used because it also degrades safely (starting early, never late) on
+// the odd repository where they don't.
 func ResolveStart(ctx context.Context, repoPath, start, end string, firstParent bool) (string, error) {
 	if !IsDate(start) {
 		return start, nil
@@ -148,23 +157,32 @@ func ResolveStart(ctx context.Context, repoPath, start, end string, firstParent 
 	if err != nil {
 		return "", err
 	}
-	for i := len(commits) - 1; i >= 0; i-- {
-		if commits[i].AuthorDate.Before(day) {
-			return commits[i].SHA, nil
+	for i, c := range commits {
+		if c.CommitDate.Before(day) {
+			continue
 		}
+		if i == 0 {
+			return "", nil
+		}
+		return commits[i-1].SHA, nil
 	}
-	return "", fmt.Errorf("start: no commit reachable from %s is authored before %s", end, start)
+	return "", fmt.Errorf("start: no commit reachable from %s landed on or after %s", end, start)
 }
 
 // ListCommits returns the sampled commits in the range (start, end] in
-// oldest-first order. If firstParent is true, only first parents are followed
-// (linear history).
+// oldest-first order, or every commit reachable from end when start is "".
+// If firstParent is true, only first parents are followed (linear history).
 func ListCommits(ctx context.Context, repoPath, start, end string, firstParent bool, sampling Sampling) ([]CommitMeta, error) {
-	if err := validateRef(start, "start"); err != nil {
-		return nil, err
+	if start != "" {
+		if err := validateRef(start, "start"); err != nil {
+			return nil, err
+		}
 	}
 	if !buckets[sampling.Bucket] {
 		return nil, fmt.Errorf("sampling: unknown bucket %q", sampling.Bucket)
+	}
+	if sampling.Every < 1 {
+		return nil, fmt.Errorf("sampling: every must be at least 1 (got %d)", sampling.Every)
 	}
 	all, err := listCommits(ctx, repoPath, start, end, firstParent)
 	if err != nil {
@@ -183,7 +201,7 @@ func listCommits(ctx context.Context, repoPath, start, end string, firstParent b
 		return nil, err
 	}
 
-	args := []string{"-C", repoPath, "--no-pager", "rev-list", "--format=%H %aI", "--reverse"}
+	args := []string{"-C", repoPath, "--no-pager", "rev-list", "--format=%H %cI", "--reverse"}
 	if firstParent {
 		args = append(args, "--first-parent")
 	}
@@ -212,15 +230,18 @@ func listCommits(ctx context.Context, repoPath, start, end string, firstParent b
 		}
 		t, err := time.Parse(time.RFC3339, parts[1])
 		if err != nil {
-			return nil, fmt.Errorf("parsing author date in rev-list output: %w", err)
+			return nil, fmt.Errorf("parsing commit date in rev-list output: %w", err)
 		}
-		all = append(all, CommitMeta{SHA: parts[0], AuthorDate: t})
+		all = append(all, CommitMeta{SHA: parts[0], CommitDate: t})
 	}
 	return all, nil
 }
 
 func sample(all []CommitMeta, sampling Sampling) []CommitMeta {
-	every := max(1, sampling.Every)
+	if len(all) == 0 {
+		return nil
+	}
+	every := sampling.Every
 	var picked []CommitMeta
 	if sampling.Bucket == "commit" {
 		for i, c := range all {
@@ -231,8 +252,8 @@ func sample(all []CommitMeta, sampling Sampling) []CommitMeta {
 	} else {
 		latest := make(map[int64]CommitMeta)
 		for _, c := range all {
-			key := bucketIndex(c.AuthorDate, sampling.Bucket)
-			if prev, seen := latest[key]; !seen || c.AuthorDate.After(prev.AuthorDate) {
+			key := bucketIndex(c.CommitDate, sampling.Bucket)
+			if prev, seen := latest[key]; !seen || c.CommitDate.After(prev.CommitDate) {
 				latest[key] = c
 			}
 		}
@@ -247,8 +268,15 @@ func sample(all []CommitMeta, sampling Sampling) []CommitMeta {
 			picked = append(picked, latest[key])
 		}
 	}
-	if len(all) > 0 && (len(picked) == 0 || picked[len(picked)-1].SHA != all[len(all)-1].SHA) {
-		picked = append(picked, all[len(all)-1])
+	// The tip is always measured. In bucket mode it is normally its bucket's
+	// own pick; add by identity so it is never duplicated, and keep the
+	// output in commit-date order.
+	tip := all[len(all)-1]
+	if !slices.ContainsFunc(picked, func(c CommitMeta) bool { return c.SHA == tip.SHA }) {
+		picked = append(picked, tip)
+	}
+	if sampling.Bucket != "commit" {
+		sort.SliceStable(picked, func(i, j int) bool { return picked[i].CommitDate.Before(picked[j].CommitDate) })
 	}
 	return picked
 }
@@ -373,7 +401,7 @@ func appendPathspec(args, includePaths, excludePaths []string) []string {
 // gitGrep runs a git grep invocation. Exit status 1 (nothing reported) yields
 // empty output and no error.
 func gitGrep(ctx context.Context, args []string) ([]byte, error) {
-	out, _, err := runGit(ctx, args, true)
+	out, err := runGit(ctx, args, true)
 	if err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, "cannot use Perl") || strings.Contains(msg, "PCRE") {

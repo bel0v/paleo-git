@@ -19,6 +19,7 @@ traversals:
 metrics:
   - id: legacy-imports
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**/*.ts"]
     runner:
@@ -86,6 +87,7 @@ traversals:
 metrics:
   - id: test
     traversal: nonexistent
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -121,6 +123,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -150,6 +153,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner: {}
@@ -178,6 +182,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: []
     runner:
@@ -213,6 +218,7 @@ traversals:
 metrics:
   - id: legacy-imports
     traversal: full
+    output: { files: list }
     paths:
       include: ["src/**/*.ts"]
     runner:
@@ -221,6 +227,7 @@ metrics:
         pattern: "from '@legacy/"
   - id: new-migration
     traversal: recent
+    output: { files: list }
     paths:
       include: ["src/**/*.tsx"]
       exclude: ["**/*.test.*"]
@@ -254,6 +261,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -285,6 +293,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -331,6 +340,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -362,6 +372,7 @@ traversals:
 metrics:
   - id: test
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -393,6 +404,7 @@ traversals:
 metrics:
   - id: m
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       builtin: git_grep_cuont
@@ -428,6 +440,7 @@ traversals:
 metrics:
   - id: m
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:`+runnerYAML+`
 `)
@@ -448,17 +461,20 @@ traversals:
 metrics:
   - id: grep
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       builtin: git_grep_count
       config: { pattern: "foo" }
   - id: files
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       builtin: git_file_count
   - id: ext
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       exec: ["node", "check.js"]
@@ -480,6 +496,7 @@ traversals:
 metrics:
   - id: my-metric
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/**"]
     runner:
@@ -488,6 +505,7 @@ metrics:
         pattern: "foo"
   - id: my-metric
     traversal: default
+    output: { files: list }
     paths:
       include: ["lib/**"]
     runner:
@@ -528,9 +546,8 @@ metrics:
 	}
 
 	for name, output := range map[string]string{
-		"absent": "",
-		"list":   "\n    output: { files: list }",
-		"none":   "\n    output: { files: none }",
+		"list": "\n    output: { files: list }",
+		"none": "\n    output: { files: none }",
 	} {
 		cfg := mustParse(t, metric(output))
 		if err := Validate(cfg); err != nil {
@@ -538,20 +555,22 @@ metrics:
 		}
 	}
 
-	cfg := mustParse(t, metric("\n    output: { files: no }"))
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for output.files: no")
-	}
-	if !strings.Contains(err.Error(), "output.files") || !strings.Contains(err.Error(), "none") {
-		t.Errorf("error should name the field and list valid values, got: %v", err)
+	for name, output := range map[string]string{
+		"absent":  "",
+		"unknown": "\n    output: { files: no }",
+	} {
+		err := Validate(mustParse(t, metric(output)))
+		if err == nil {
+			t.Errorf("%s: expected validation error", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "output.files") || !strings.Contains(err.Error(), "none") {
+			t.Errorf("%s: error should name the field and list valid values, got: %v", name, err)
+		}
 	}
 }
 
 func TestMetric_EmitsFiles(t *testing.T) {
-	if !(Metric{}).EmitsFiles() {
-		t.Error("default should emit files")
-	}
 	if !(Metric{Output: Output{Files: FilesList}}).EmitsFiles() {
 		t.Error("list should emit files")
 	}
@@ -572,6 +591,7 @@ traversals:
 metrics:
   - id: m
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       builtin: git_grep_count
@@ -607,6 +627,7 @@ traversals:
 metrics:
   - id: m
     traversal: default
+    output: { files: list }
     paths: { include: ["src/"] }
     runner:
       builtin: git_grep_count

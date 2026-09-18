@@ -29,6 +29,7 @@ traversals:
 metrics:
   - id: legacy-imports
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/"]
     runner:
@@ -61,6 +62,7 @@ traversals:
 metrics:
   - id: flaky
     traversal: default
+    output: { files: list }
     paths:
       include: ["src/"]
     runner:

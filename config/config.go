@@ -62,29 +62,29 @@ type Metric struct {
 	Traversal   string    `yaml:"traversal"`
 	Paths       Paths     `yaml:"paths"`
 	Runner      RunnerRef `yaml:"runner"`
-	Output      Output    `yaml:"output,omitempty"`
+	Output      Output    `yaml:"output"`
 }
 
 // Output controls what a measurement emits beyond its value. It does not
 // affect the value itself and is therefore not part of MetricHash.
 type Output struct {
-	Files FilesOutput `yaml:"files,omitempty"`
+	Files FilesOutput `yaml:"files"`
 }
 
 // FilesOutput says what a metric emits for the files it matched.
 type FilesOutput string
 
 const (
-	// FilesList emits the matching file paths (the default).
+	// FilesList emits the matching file paths.
 	FilesList FilesOutput = "list"
 	// FilesNone drops them from results and the store.
 	FilesNone FilesOutput = "none"
 )
 
-// IsValid reports whether f is a known value; the empty value means FilesList.
+// IsValid reports whether f is a known value.
 func (f FilesOutput) IsValid() bool {
 	switch f {
-	case "", FilesList, FilesNone:
+	case FilesList, FilesNone:
 		return true
 	}
 	return false
@@ -92,7 +92,7 @@ func (f FilesOutput) IsValid() bool {
 
 // EmitsFiles reports whether results for this metric carry file paths.
 func (m Metric) EmitsFiles() bool {
-	return m.Output.Files != FilesNone
+	return m.Output.Files == FilesList
 }
 
 type Paths struct {

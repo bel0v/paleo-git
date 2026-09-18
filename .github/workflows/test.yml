@@ -14,7 +14,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v7
-      - run: go test ./...
+      - run: go test -race ./...
 
   action:
     name: Setup action installs a release

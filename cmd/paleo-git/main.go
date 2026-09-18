@@ -126,7 +126,7 @@ func measureCmd() *cobra.Command {
 				cfg.Metrics = pending
 			}
 
-			results, err := engine.Measure(ctx, cfg, repoPath, meta.SHA)
+			results, err := engine.MeasureAt(ctx, cfg, repoPath, meta)
 			if err != nil {
 				return err
 			}

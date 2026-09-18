@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +61,24 @@ func CreateFixtureRepo(t *testing.T) string {
 	return repoDir
 }
 
+// CreateDatedRepo creates a repo whose only commits are one file each, made
+// at the given RFC3339 author/committer dates in order. Unlike
+// CreateFixtureRepo it has no "now"-dated commits, so tests about dates see
+// exactly the history they describe.
+func CreateDatedRepo(t *testing.T, dates ...string) string {
+	t.Helper()
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	runGit(t, repoDir, "git", "init")
+	runGit(t, repoDir, "git", "checkout", "-b", "main")
+	for i, date := range dates {
+		CommitFileAt(t, repoDir, fmt.Sprintf("dated/%d.ts", i), date, date)
+	}
+	return repoDir
+}
+
 // CommitFile writes a file into an existing fixture repo and commits it on
 // top of HEAD.
 func CommitFile(t *testing.T, repoDir, relPath, content string) {
@@ -69,14 +88,22 @@ func CommitFile(t *testing.T, repoDir, relPath, content string) {
 	runGit(t, repoDir, "git", "commit", "-m", "Add "+relPath)
 }
 
-// CommitFileAt is CommitFile with the author and committer date set to the
-// given RFC3339 timestamp, for tests that depend on commit dates.
+// CommitFileAt is CommitFile with the author and committer date both set to
+// the given RFC3339 timestamp, for tests that depend on commit dates.
 func CommitFileAt(t *testing.T, repoDir, relPath, content, date string) {
+	t.Helper()
+	CommitFileAtDates(t, repoDir, relPath, content, date, date)
+}
+
+// CommitFileAtDates is CommitFile with separate author and committer dates,
+// the shape a rebased commit has: written at authorDate, landed at
+// committerDate.
+func CommitFileAtDates(t *testing.T, repoDir, relPath, content, authorDate, committerDate string) {
 	t.Helper()
 	writeFile(t, repoDir, relPath, content)
 	runGit(t, repoDir, "git", "add", ".")
-	runGitEnv(t, repoDir, []string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date},
-		"git", "commit", "-m", "Add "+relPath+" at "+date)
+	runGitEnv(t, repoDir, []string{"GIT_AUTHOR_DATE=" + authorDate, "GIT_COMMITTER_DATE=" + committerDate},
+		"git", "commit", "-m", "Add "+relPath+" at "+committerDate)
 }
 
 func runGit(t *testing.T, repoDir string, args ...string) {
