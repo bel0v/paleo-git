@@ -170,12 +170,12 @@ func Scan(ctx context.Context, cfg config.Config, repoPath string, opts ScanOpti
 		}
 
 		firstParent := trav.Mode == "first_parent"
-		every := trav.Sampling.Every
-		if every < 1 {
-			every = 1
+		start, err := vcs.ResolveStart(ctx, repoPath, trav.Range.Start, trav.Range.End, firstParent)
+		if err != nil {
+			return fmt.Errorf("resolving start of traversal %q: %w", travName, err)
 		}
-
-		commits, err := vcs.ListCommits(ctx, repoPath, trav.Range.Start, trav.Range.End, firstParent, every)
+		sampling := vcs.Sampling{Every: trav.Sampling.Every, Bucket: string(trav.Sampling.Bucket)}
+		commits, err := vcs.ListCommits(ctx, repoPath, start, trav.Range.End, firstParent, sampling)
 		if err != nil {
 			return fmt.Errorf("listing commits for traversal %q: %w", travName, err)
 		}

@@ -17,7 +17,7 @@ func makeTestConfig() config.Config {
 			"default": {
 				Range:    config.Range{Start: "HEAD~4", End: "HEAD"},
 				Mode:     "first_parent",
-				Sampling: config.Sampling{Every: 1},
+				Sampling: config.Sampling{Bucket: config.BucketCommit, Every: 1},
 			},
 		},
 		Metrics: []config.Metric{
@@ -118,7 +118,7 @@ func TestMeasure_ContinuesPastFailingMetric(t *testing.T) {
 			"default": {
 				Range:    config.Range{Start: "HEAD~1", End: "HEAD"},
 				Mode:     "first_parent",
-				Sampling: config.Sampling{Every: 1},
+				Sampling: config.Sampling{Bucket: config.BucketCommit, Every: 1},
 			},
 		},
 		Metrics: []config.Metric{
@@ -318,12 +318,12 @@ func TestScan_DifferentTraversals(t *testing.T) {
 			"full": {
 				Range:    config.Range{Start: "HEAD~4", End: "HEAD"},
 				Mode:     "first_parent",
-				Sampling: config.Sampling{Every: 1},
+				Sampling: config.Sampling{Bucket: config.BucketCommit, Every: 1},
 			},
 			"recent": {
 				Range:    config.Range{Start: "HEAD~2", End: "HEAD"},
 				Mode:     "first_parent",
-				Sampling: config.Sampling{Every: 1},
+				Sampling: config.Sampling{Bucket: config.BucketCommit, Every: 1},
 			},
 		},
 		Metrics: []config.Metric{

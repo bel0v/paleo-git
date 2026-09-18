@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/bel0v/paleo-git/runner"
 	"github.com/bel0v/paleo-git/runner/builtins"
 	runnerexec "github.com/bel0v/paleo-git/runner/exec"
+	"github.com/bel0v/paleo-git/vcs"
 )
 
 type Config struct {
@@ -29,7 +31,29 @@ type Range struct {
 }
 
 type Sampling struct {
-	Every int `yaml:"every"`
+	// Bucket is what Every strides over: individual commits, or the latest
+	// commit of each UTC calendar day, week or month.
+	Bucket Bucket `yaml:"bucket"`
+	Every  int    `yaml:"every"`
+}
+
+// Bucket is the unit a traversal is sampled in.
+type Bucket string
+
+const (
+	BucketCommit Bucket = "commit"
+	BucketDay    Bucket = "day"
+	BucketWeek   Bucket = "week"
+	BucketMonth  Bucket = "month"
+)
+
+// IsValid reports whether b is a known bucket.
+func (b Bucket) IsValid() bool {
+	switch b {
+	case BucketCommit, BucketDay, BucketWeek, BucketMonth:
+		return true
+	}
+	return false
 }
 
 type Metric struct {
@@ -104,6 +128,10 @@ func Validate(cfg Config) error {
 	for name, tr := range cfg.Traversals {
 		if tr.Range.Start == "" {
 			errs = append(errs, fmt.Sprintf("traversals[%s].range.start: must not be empty", name))
+		} else if vcs.IsDate(tr.Range.Start) {
+			if _, err := time.Parse("2006-01-02", tr.Range.Start); err != nil {
+				errs = append(errs, fmt.Sprintf("traversals[%s].range.start: invalid date %q", name, tr.Range.Start))
+			}
 		}
 		if tr.Range.End == "" {
 			errs = append(errs, fmt.Sprintf("traversals[%s].range.end: must not be empty", name))
@@ -113,6 +141,9 @@ func Validate(cfg Config) error {
 		}
 		if tr.Sampling.Every < 1 {
 			errs = append(errs, fmt.Sprintf("traversals[%s].sampling.every: must be at least 1 (got %d)", name, tr.Sampling.Every))
+		}
+		if !tr.Sampling.Bucket.IsValid() {
+			errs = append(errs, fmt.Sprintf("traversals[%s].sampling.bucket: invalid value %q (supported: %s, %s, %s, %s)", name, tr.Sampling.Bucket, BucketCommit, BucketDay, BucketWeek, BucketMonth))
 		}
 	}
 

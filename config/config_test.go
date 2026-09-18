@@ -14,6 +14,7 @@ traversals:
       end: "HEAD"
     mode: first_parent
     sampling:
+      bucket: commit
       every: 10
 metrics:
   - id: legacy-imports
@@ -81,7 +82,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: nonexistent
@@ -116,7 +117,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -145,7 +146,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -173,7 +174,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -204,11 +205,11 @@ traversals:
   full:
     range: { start: "main~2000", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 25 }
+    sampling: { bucket: commit, every: 25 }
   recent:
     range: { start: "2025-11-01", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 5 }
+    sampling: { bucket: commit, every: 5 }
 metrics:
   - id: legacy-imports
     traversal: full
@@ -249,7 +250,7 @@ traversals:
   default:
     range: { start: "", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -280,7 +281,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: invalid_mode
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -326,7 +327,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: test
     traversal: default
@@ -388,7 +389,7 @@ traversals:
   default:
     range: { start: "HEAD~10", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 1 }
+    sampling: { bucket: commit, every: 1 }
 metrics:
   - id: m
     traversal: default
@@ -423,7 +424,7 @@ traversals:
   default:
     range: { start: "HEAD~10", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 1 }
+    sampling: { bucket: commit, every: 1 }
 metrics:
   - id: m
     traversal: default
@@ -443,7 +444,7 @@ traversals:
   default:
     range: { start: "HEAD~10", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 1 }
+    sampling: { bucket: commit, every: 1 }
 metrics:
   - id: grep
     traversal: default
@@ -475,7 +476,7 @@ traversals:
   default:
     range: { start: "main~100", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 10 }
+    sampling: { bucket: commit, every: 10 }
 metrics:
   - id: my-metric
     traversal: default
@@ -515,7 +516,7 @@ traversals:
   default:
     range: { start: "HEAD~10", end: "HEAD" }
     mode: first_parent
-    sampling: { every: 1 }
+    sampling: { bucket: commit, every: 1 }
 metrics:
   - id: m
     traversal: default
@@ -556,5 +557,69 @@ func TestMetric_EmitsFiles(t *testing.T) {
 	}
 	if (Metric{Output: Output{Files: FilesNone}}).EmitsFiles() {
 		t.Error("none should not emit files")
+	}
+}
+
+func TestValidateConfig_SamplingBucket(t *testing.T) {
+	traversal := func(sampling string) string {
+		return `
+version: 1
+traversals:
+  default:
+    range: { start: "HEAD~10", end: "HEAD" }
+    mode: first_parent
+    sampling: ` + sampling + `
+metrics:
+  - id: m
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_grep_count
+      config: { pattern: "foo" }
+`
+	}
+	for _, ok := range []string{"{ bucket: commit, every: 1 }", "{ bucket: day, every: 1 }", "{ bucket: week, every: 2 }", "{ bucket: month, every: 1 }"} {
+		if err := Validate(mustParse(t, traversal(ok))); err != nil {
+			t.Errorf("%s: unexpected error: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"{ every: 1 }", "{ bucket: fortnight, every: 1 }", "{ bucket: day }"} {
+		err := Validate(mustParse(t, traversal(bad)))
+		if err == nil {
+			t.Errorf("%s: expected validation error", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "sampling") {
+			t.Errorf("%s: error should name sampling, got: %v", bad, err)
+		}
+	}
+}
+
+func TestValidateConfig_RangeStartDate(t *testing.T) {
+	cfg := func(start string) string {
+		return `
+version: 1
+traversals:
+  default:
+    range: { start: "` + start + `", end: "HEAD" }
+    mode: first_parent
+    sampling: { bucket: commit, every: 1 }
+metrics:
+  - id: m
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_grep_count
+      config: { pattern: "foo" }
+`
+	}
+	for _, ok := range []string{"2025-01-01", "main~100", "v1.2.3"} {
+		if err := Validate(mustParse(t, cfg(ok))); err != nil {
+			t.Errorf("%s: unexpected error: %v", ok, err)
+		}
+	}
+	err := Validate(mustParse(t, cfg("2025-13-45")))
+	if err == nil || !strings.Contains(err.Error(), "invalid date") {
+		t.Errorf("expected invalid date error, got: %v", err)
 	}
 }

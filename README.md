@@ -78,7 +78,8 @@ traversals:
       end: "HEAD"
     mode: first_parent
     sampling:
-      every: 10
+      bucket: day
+      every: 1
 
 metrics:
   - id: legacy-imports
@@ -214,9 +215,8 @@ traversals:
       end: "HEAD" # End ref (inclusive)
     mode: first_parent # Traversal mode (first_parent only for now)
     sampling:
-      every: 25 # Stride: 1 = every commit, 10 = every 10th. Counted from
-                # range.start, so pin start to a SHA to keep sampled
-                # commits stable between scans.
+      bucket: day # commit | day | week | month (see Sampling below)
+      every: 1 # Stride over buckets: 1 = every bucket, 2 = every other
 
 metrics:
   - id: <string> # Unique identifier (no slashes or path separators)
@@ -238,6 +238,25 @@ value is measured exactly as before, but results carry no `files` and the
 data directory stores no file set for them. Changing it does not alter the
 metric hash, so toggling it never triggers a re-measure.
 
+### Sampling
+
+`sampling.bucket` says what a traversal is sampled in, and `every` strides
+over it:
+
+| bucket | what is measured |
+|--------|------------------|
+| `commit` | every `every`-th first-parent commit, counted from `range.start` |
+| `day` / `week` / `month` | the latest-authored commit of every `every`-th UTC calendar day, ISO week (Monday-based) or month |
+
+Calendar buckets are numbered from the Unix epoch, so `bucket: day, every: 2`
+picks the same days however `range.start` moves; a `commit` stride shifts with
+the start unless it is pinned to a SHA. The last commit of the range is always
+included, whichever sampling is used.
+
+`range.start` and `range.end` are git revisions. `range.start` may instead be
+a `YYYY-MM-DD` date, resolved to the last first-parent commit authored before
+that day, so the traversal begins with the first commit on or after it.
+
 Validation rules (checked at load time, before anything is measured):
 
 - Metric IDs must be unique
@@ -247,7 +266,9 @@ Validation rules (checked at load time, before anything is measured):
   runner.
 - `paths.include` must not be empty
 - `output.files`, if set, must be `list` or `none`
+- `sampling.bucket` must be `commit`, `day`, `week` or `month`
 - `sampling.every` must be at least 1
+- `range.start`, if a date, must be a valid `YYYY-MM-DD`
 
 ### Paths
 

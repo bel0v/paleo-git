@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -108,14 +110,73 @@ func ResolveCommit(ctx context.Context, repoPath, ref string) (CommitMeta, error
 	return CommitMeta{SHA: parts[0], AuthorDate: t}, nil
 }
 
-// ListCommits returns commits in the range (start, end] in oldest-first order.
-// If firstParent is true, only follows first parents (linear history).
-// The every parameter controls sampling stride: 1 = every commit, 2 = every other, etc.
-func ListCommits(ctx context.Context, repoPath, start, end string, firstParent bool, every int) ([]CommitMeta, error) {
-	if err := validateRepoPath(repoPath); err != nil {
+// Sampling selects which commits of a traversal are measured.
+//
+// Bucket "commit" makes Every a stride over the commit list counted from the
+// range start (1 = every commit). Buckets "day", "week" and "month" are UTC
+// calendar buckets: the latest-authored commit of each is kept and Every
+// strides over buckets, counted from the Unix epoch so the chosen buckets do
+// not shift when the range start moves. The last commit of the range is
+// always included.
+type Sampling struct {
+	Bucket string
+	Every  int
+}
+
+var buckets = map[string]bool{"commit": true, "day": true, "week": true, "month": true}
+
+var isoDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// IsDate reports whether s is a YYYY-MM-DD date rather than a git revision.
+func IsDate(s string) bool {
+	return isoDate.MatchString(s)
+}
+
+// ResolveStart turns a traversal start into a revision. A git revision is
+// returned unchanged; a YYYY-MM-DD date resolves to the last commit reachable
+// from end (first parents only when firstParent) authored before that day,
+// so the traversal (start, end] begins with the first commit on or after it.
+func ResolveStart(ctx context.Context, repoPath, start, end string, firstParent bool) (string, error) {
+	if !IsDate(start) {
+		return start, nil
+	}
+	day, err := time.Parse("2006-01-02", start)
+	if err != nil {
+		return "", fmt.Errorf("start: invalid date %q: %w", start, err)
+	}
+	commits, err := listCommits(ctx, repoPath, "", end, firstParent)
+	if err != nil {
+		return "", err
+	}
+	for i := len(commits) - 1; i >= 0; i-- {
+		if commits[i].AuthorDate.Before(day) {
+			return commits[i].SHA, nil
+		}
+	}
+	return "", fmt.Errorf("start: no commit reachable from %s is authored before %s", end, start)
+}
+
+// ListCommits returns the sampled commits in the range (start, end] in
+// oldest-first order. If firstParent is true, only first parents are followed
+// (linear history).
+func ListCommits(ctx context.Context, repoPath, start, end string, firstParent bool, sampling Sampling) ([]CommitMeta, error) {
+	if err := validateRef(start, "start"); err != nil {
 		return nil, err
 	}
-	if err := validateRef(start, "start"); err != nil {
+	if !buckets[sampling.Bucket] {
+		return nil, fmt.Errorf("sampling: unknown bucket %q", sampling.Bucket)
+	}
+	all, err := listCommits(ctx, repoPath, start, end, firstParent)
+	if err != nil {
+		return nil, err
+	}
+	return sample(all, sampling), nil
+}
+
+// listCommits lists (start, end] oldest first, or everything reachable from
+// end when start is empty.
+func listCommits(ctx context.Context, repoPath, start, end string, firstParent bool) ([]CommitMeta, error) {
+	if err := validateRepoPath(repoPath); err != nil {
 		return nil, err
 	}
 	if err := validateRef(end, "end"); err != nil {
@@ -126,7 +187,11 @@ func ListCommits(ctx context.Context, repoPath, start, end string, firstParent b
 	if firstParent {
 		args = append(args, "--first-parent")
 	}
-	args = append(args, start+".."+end)
+	if start == "" {
+		args = append(args, end)
+	} else {
+		args = append(args, start+".."+end)
+	}
 
 	out, err := gitRun(ctx, args...)
 	if err != nil {
@@ -151,22 +216,57 @@ func ListCommits(ctx context.Context, repoPath, start, end string, firstParent b
 		}
 		all = append(all, CommitMeta{SHA: parts[0], AuthorDate: t})
 	}
+	return all, nil
+}
 
-	if every <= 1 {
-		return all, nil
-	}
-
-	var sampled []CommitMeta
-	for i, c := range all {
-		if i%every == 0 {
-			sampled = append(sampled, c)
+func sample(all []CommitMeta, sampling Sampling) []CommitMeta {
+	every := max(1, sampling.Every)
+	var picked []CommitMeta
+	if sampling.Bucket == "commit" {
+		for i, c := range all {
+			if i%every == 0 {
+				picked = append(picked, c)
+			}
+		}
+	} else {
+		latest := make(map[int64]CommitMeta)
+		for _, c := range all {
+			key := bucketIndex(c.AuthorDate, sampling.Bucket)
+			if prev, seen := latest[key]; !seen || c.AuthorDate.After(prev.AuthorDate) {
+				latest[key] = c
+			}
+		}
+		keys := make([]int64, 0, len(latest))
+		for key := range latest {
+			if key%int64(every) == 0 {
+				keys = append(keys, key)
+			}
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		for _, key := range keys {
+			picked = append(picked, latest[key])
 		}
 	}
-	// Always include the last commit
-	if len(all) > 0 && (len(sampled) == 0 || sampled[len(sampled)-1].SHA != all[len(all)-1].SHA) {
-		sampled = append(sampled, all[len(all)-1])
+	if len(all) > 0 && (len(picked) == 0 || picked[len(picked)-1].SHA != all[len(all)-1].SHA) {
+		picked = append(picked, all[len(all)-1])
 	}
-	return sampled, nil
+	return picked
+}
+
+// bucketIndex numbers UTC calendar buckets from the Unix epoch: days since
+// 1970-01-01, ISO weeks (Monday-based) since 1969-12-29, or months since
+// 1970-01.
+func bucketIndex(t time.Time, bucket string) int64 {
+	u := t.UTC()
+	days := u.Unix() / 86400
+	switch bucket {
+	case "week":
+		return (days + 3) / 7
+	case "month":
+		return int64(u.Year())*12 + int64(u.Month()) - 1
+	default:
+		return days
+	}
 }
 
 // GrepCount counts lines matching a pattern at a given commit.

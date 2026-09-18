@@ -69,7 +69,22 @@ func CommitFile(t *testing.T, repoDir, relPath, content string) {
 	runGit(t, repoDir, "git", "commit", "-m", "Add "+relPath)
 }
 
+// CommitFileAt is CommitFile with the author and committer date set to the
+// given RFC3339 timestamp, for tests that depend on commit dates.
+func CommitFileAt(t *testing.T, repoDir, relPath, content, date string) {
+	t.Helper()
+	writeFile(t, repoDir, relPath, content)
+	runGit(t, repoDir, "git", "add", ".")
+	runGitEnv(t, repoDir, []string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date},
+		"git", "commit", "-m", "Add "+relPath+" at "+date)
+}
+
 func runGit(t *testing.T, repoDir string, args ...string) {
+	t.Helper()
+	runGitEnv(t, repoDir, nil, args...)
+}
+
+func runGitEnv(t *testing.T, repoDir string, extraEnv []string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = repoDir
@@ -81,6 +96,7 @@ func runGit(t *testing.T, repoDir string, args ...string) {
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command %v failed: %v\n%s", args, err, out)

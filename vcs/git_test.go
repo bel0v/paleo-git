@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/bel0v/paleo-git/internal/testutil"
@@ -10,7 +11,7 @@ import (
 func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
-	commits, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 1)
+	commits, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, Sampling{Bucket: "commit", Every: 1})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -31,12 +32,12 @@ func TestListCommits_FirstParentReturnsLinearHistory(t *testing.T) {
 func TestListCommits_SamplingStrideSkipsCommits(t *testing.T) {
 	repo := testutil.CreateFixtureRepo(t)
 
-	all, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 1)
+	all, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, Sampling{Bucket: "commit", Every: 1})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
 
-	sampled, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, 2)
+	sampled, err := ListCommits(context.Background(), repo, "HEAD~4", "HEAD", true, Sampling{Bucket: "commit", Every: 2})
 	if err != nil {
 		t.Fatalf("ListCommits error: %v", err)
 	}
@@ -231,8 +232,129 @@ func TestListCommits_RespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	_, err := ListCommits(ctx, repo, "HEAD~4", "HEAD", true, 1)
+	_, err := ListCommits(ctx, repo, "HEAD~4", "HEAD", true, Sampling{Bucket: "commit", Every: 1})
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
+	}
+}
+
+// datedRepo adds five commits with controlled author dates on top of the
+// fixture: two on Wed 2025-01-01, then 01-02 (Thu), 01-05 (Sun) and 01-06 (Mon,
+// the next ISO week). HEAD~5 is the last fixture commit.
+func datedRepo(t *testing.T) string {
+	repo := testutil.CreateFixtureRepo(t)
+	for i, date := range []string{
+		"2025-01-01T09:00:00Z", "2025-01-01T17:00:00Z", "2025-01-02T10:00:00Z",
+		"2025-01-05T10:00:00Z", "2025-01-06T10:00:00Z",
+	} {
+		testutil.CommitFileAt(t, repo, fmt.Sprintf("dated/%d.ts", i), date, date)
+	}
+	return repo
+}
+
+func days(commits []CommitMeta) []string {
+	out := make([]string, len(commits))
+	for i, c := range commits {
+		out[i] = c.AuthorDate.UTC().Format("2006-01-02T15")
+	}
+	return out
+}
+
+func TestListCommits_DayBucketKeepsLatestCommitPerDay(t *testing.T) {
+	repo := datedRepo(t)
+	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "day", Every: 1})
+	if err != nil {
+		t.Fatalf("ListCommits error: %v", err)
+	}
+	want := []string{"2025-01-01T17", "2025-01-02T10", "2025-01-05T10", "2025-01-06T10"}
+	if fmt.Sprint(days(got)) != fmt.Sprint(want) {
+		t.Errorf("day buckets: got %v, want %v", days(got), want)
+	}
+}
+
+func TestListCommits_WeekBucketFollowsISOWeeks(t *testing.T) {
+	repo := datedRepo(t)
+	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "week", Every: 1})
+	if err != nil {
+		t.Fatalf("ListCommits error: %v", err)
+	}
+	// Wed 01-01 .. Sun 01-05 are one ISO week; Mon 01-06 starts the next.
+	want := []string{"2025-01-05T10", "2025-01-06T10"}
+	if fmt.Sprint(days(got)) != fmt.Sprint(want) {
+		t.Errorf("week buckets: got %v, want %v", days(got), want)
+	}
+}
+
+func TestListCommits_BucketStrideIsAnchoredToEpochNotRangeStart(t *testing.T) {
+	repo := datedRepo(t)
+	// Day numbers since the epoch: 2025-01-01 = 20089 (odd), 01-02 = 20090,
+	// 01-05 = 20093, 01-06 = 20094. every: 2 keeps even days; the tip is
+	// 01-06 and is even anyway.
+	want := []string{"2025-01-02T10", "2025-01-06T10"}
+	for _, start := range []string{"HEAD~5", "HEAD~4"} {
+		got, err := ListCommits(context.Background(), repo, start, "HEAD", true, Sampling{Bucket: "day", Every: 2})
+		if err != nil {
+			t.Fatalf("ListCommits error: %v", err)
+		}
+		if fmt.Sprint(days(got)) != fmt.Sprint(want) {
+			t.Errorf("start %s: got %v, want %v (picks must not move with the start)", start, days(got), want)
+		}
+	}
+}
+
+func TestListCommits_BucketAlwaysIncludesTip(t *testing.T) {
+	repo := datedRepo(t)
+	// Month buckets: everything is January 2025 -> one bucket, whose latest
+	// commit is already the tip. Then week/every:2: week of 01-06 has index
+	// (20094+3)/7 = 2871, odd, so it would be dropped without the tip rule.
+	got, err := ListCommits(context.Background(), repo, "HEAD~5", "HEAD", true, Sampling{Bucket: "week", Every: 2})
+	if err != nil {
+		t.Fatalf("ListCommits error: %v", err)
+	}
+	if last := got[len(got)-1].AuthorDate.UTC().Format("2006-01-02"); last != "2025-01-06" {
+		t.Errorf("tip must always be included, last was %s", last)
+	}
+}
+
+func TestListCommits_RejectsUnknownBucket(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	if _, err := ListCommits(context.Background(), repo, "HEAD~1", "HEAD", true, Sampling{Bucket: "fortnight", Every: 1}); err == nil {
+		t.Fatal("expected error for unknown bucket")
+	}
+	if _, err := ListCommits(context.Background(), repo, "HEAD~1", "HEAD", true, Sampling{Every: 1}); err == nil {
+		t.Fatal("expected error for empty bucket: it must be explicit")
+	}
+}
+
+func TestResolveStart_DateResolvesToLastCommitBeforeIt(t *testing.T) {
+	repo := datedRepo(t)
+	sha, err := ResolveStart(context.Background(), repo, "2025-01-05", "HEAD", true)
+	if err != nil {
+		t.Fatalf("ResolveStart error: %v", err)
+	}
+	meta, err := ResolveCommit(context.Background(), repo, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := meta.AuthorDate.UTC().Format("2006-01-02T15"); got != "2025-01-02T10" {
+		t.Errorf("start before 2025-01-05 should be the 01-02 commit, got %s", got)
+	}
+	// The traversal then begins with the first commit on/after the date.
+	commits, err := ListCommits(context.Background(), repo, sha, "HEAD", true, Sampling{Bucket: "commit", Every: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := days(commits)[0]; first != "2025-01-05T10" {
+		t.Errorf("traversal should start at 2025-01-05, got %s", first)
+	}
+}
+
+func TestResolveStart_PassesRevisionsThroughAndRejectsTooEarlyDates(t *testing.T) {
+	repo := datedRepo(t)
+	if got, err := ResolveStart(context.Background(), repo, "HEAD~3", "HEAD", true); err != nil || got != "HEAD~3" {
+		t.Errorf("revision should pass through, got %q, %v", got, err)
+	}
+	if _, err := ResolveStart(context.Background(), repo, "1990-01-01", "HEAD", true); err == nil {
+		t.Error("expected error when no commit precedes the date")
 	}
 }

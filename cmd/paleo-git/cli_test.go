@@ -24,6 +24,7 @@ traversals:
       end: "HEAD"
     mode: first_parent
     sampling:
+      bucket: commit
       every: 1
 metrics:
   - id: legacy-imports
@@ -55,6 +56,7 @@ traversals:
       end: "HEAD"
     mode: first_parent
     sampling:
+      bucket: commit
       every: 1
 metrics:
   - id: flaky

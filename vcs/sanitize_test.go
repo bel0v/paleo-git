@@ -8,7 +8,7 @@ import (
 
 func TestListCommits_RejectsFlagLikeRef(t *testing.T) {
 	ctx := context.Background()
-	_, err := ListCommits(ctx, "/tmp/repo", "--exec=bad", "HEAD", true, 1)
+	_, err := ListCommits(ctx, "/tmp/repo", "--exec=bad", "HEAD", true, Sampling{Bucket: "commit", Every: 1})
 	if err == nil {
 		t.Fatal("expected error for flag-like start ref")
 	}
@@ -16,7 +16,7 @@ func TestListCommits_RejectsFlagLikeRef(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	_, err = ListCommits(ctx, "/tmp/repo", "HEAD~10", "--exec=bad", true, 1)
+	_, err = ListCommits(ctx, "/tmp/repo", "HEAD~10", "--exec=bad", true, Sampling{Bucket: "commit", Every: 1})
 	if err == nil {
 		t.Fatal("expected error for flag-like end ref")
 	}
@@ -37,7 +37,7 @@ func TestGrepCount_RejectsFlagLikeRepoPath(t *testing.T) {
 }
 
 func TestListCommits_RejectsEmptyRef(t *testing.T) {
-	_, err := ListCommits(context.Background(), "/tmp/repo", "", "HEAD", true, 1)
+	_, err := ListCommits(context.Background(), "/tmp/repo", "", "HEAD", true, Sampling{Bucket: "commit", Every: 1})
 	if err == nil {
 		t.Fatal("expected error for empty start ref")
 	}
