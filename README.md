@@ -181,7 +181,14 @@ metrics:
       builtin: git_grep_count # OR git_file_count, OR exec: [<command>, <args>...]
       config: # Runner-specific config (opaque)
         pattern: "..."
+    output:
+      files: list # Optional: list (default) emits matching paths, none drops them
 ```
+
+`output.files: none` is for metrics whose file list has no consumer: the
+value is measured exactly as before, but results carry no `files` and the
+data directory stores no file set for them. Changing it does not alter the
+metric hash, so toggling it never triggers a re-measure.
 
 Validation rules (checked at load time, before anything is measured):
 
@@ -191,6 +198,7 @@ Validation rules (checked at load time, before anything is measured):
 - `builtin` must name a known runner, and its `config` must satisfy that
   runner.
 - `paths.include` must not be empty
+- `output.files`, if set, must be `list` or `none`
 - `sampling.every` must be at least 1
 
 ### Paths
