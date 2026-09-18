@@ -16,6 +16,54 @@ brew install bel0v/tap/paleo-git
 # Or download a binary from GitHub Releases
 ```
 
+## GitHub Actions
+
+The repository doubles as a composite action that downloads the release
+binary for the runner, verifies its checksum, and adds it to `PATH`. The
+tag you reference is the version you get:
+
+```yaml
+- uses: bel0v/paleo-git@v0.4.0
+- run: paleo-git measure --config paleo.yml --load-dir data --save-dir data --quiet
+```
+
+Inputs: `version` overrides the tag (`v0.4.0`, or `latest`). Outputs:
+`version` and `path`. Linux and macOS runners, x64 and arm64. The binary is
+cached in the runner tool cache, so self-hosted runners download each
+version once.
+
+A per-push measurement that keeps its history in a workflow artifact:
+
+```yaml
+on:
+  push:
+    branches: [main]
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bel0v/paleo-git@v0.4.0
+      - name: Restore data from the last successful run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          run_id=$(gh run list --workflow "${{ github.workflow }}" --branch main \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          [ -n "$run_id" ] && gh run download "$run_id" --name paleo-data --dir data || true
+      - run: paleo-git measure --config paleo.yml --load-dir data --save-dir data --quiet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paleo-data
+          path: data
+```
+
+`measure` needs only the commit being measured, so the default shallow
+checkout is enough; `scan` needs `fetch-depth: 0`. Runners need `git` with
+PCRE support, which GitHub-hosted Linux and macOS images have.
+
 ## Quick start
 
 1. Create a config file `paleo.yml`:
@@ -286,13 +334,23 @@ Exit code 0 = success. Non-zero = error (stderr is captured).
 
 ## Architecture
 
-paleo-git is a **stateless engine library** with a thin CLI wrapper. It does not persist results, compare values, or render dashboards — those are consumer concerns.
+Three layers, each usable without the ones above it:
 
-Designed to serve three consumers:
+- **Engine** (`engine`, `runner`, `vcs`) — stateless. Given a config, a
+  repository and a commit or traversal, it runs the metrics and streams
+  results. It never touches the data directory.
+- **Store** (`store`) — the data directory format: append-only NDJSON rows
+  per metric plus content-addressed file sets. It knows how to read a skip
+  list and append new results, nothing about where the directory lives.
+- **CLI** (`cmd/paleo-git`) — wires the two together behind `measure` and
+  `scan`, with `--load-dir` and `--save-dir`. How the directory is persisted
+  between runs (a workflow artifact, a data branch, a bucket) is the
+  caller's choice; see [GitHub Actions](#github-actions) for one.
 
-- **CLI** (this tool) — wraps the engine, outputs to stdout
-- **GitHub Action** (separate repo) — CI integration with persistence and PR comments
-- **Web Dashboard** (separate repo) — trends, file-level detail, migration overview
+The composite action in this repository (`action.yml`) only installs the
+release binary; it adds no behaviour of its own, so a workflow step is a
+plain `paleo-git` invocation. Dashboards and trend checks are consumers of
+the data directory and live outside this repository.
 
 ## License
 

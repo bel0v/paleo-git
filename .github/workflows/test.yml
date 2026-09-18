@@ -15,3 +15,19 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v7
       - run: go test ./...
+
+  action:
+    name: Setup action installs a release
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        id: setup
+        with:
+          version: v0.3.0
+      - run: |
+          test "${{ steps.setup.outputs.version }}" = "v0.3.0"
+          paleo-git --version | grep -q "0.3.0"
