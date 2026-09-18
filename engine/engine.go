@@ -91,15 +91,18 @@ func runResolved(ctx context.Context, rm *resolvedMetric, repoPath, commit strin
 		}
 	}
 
-	return Result{
+	result := Result{
 		MetricID:   rm.metric.ID,
 		MetricHash: rm.hash,
 		Commit:     commit,
 		Value:      res.Value,
-		Files:      res.Files,
 		Status:     StatusOK,
 		DurationMs: duration,
 	}
+	if rm.metric.EmitsFiles() {
+		result.Files = res.Files
+	}
+	return result
 }
 
 // Measure runs all metrics at a single commit and returns results.

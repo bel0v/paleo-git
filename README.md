@@ -36,7 +36,7 @@ metrics:
   - id: legacy-imports
     traversal: default
     paths:
-      include: ["src/**/*.ts"]
+      include: ["src/*.ts"]
     runner:
       builtin: git_grep_count
       config:
@@ -175,7 +175,7 @@ metrics:
     description: <string> # Optional human description
     traversal: <name> # Required: which traversal to use
     paths:
-      include: [<pathspecs>] # Required: git pathspecs to search (use ":(glob)" for "**")
+      include: [<pathspecs>] # Required: git pathspecs to search (see below)
       exclude: [<pathspecs>] # Optional: pathspecs to exclude
     runner:
       builtin: git_grep_count # OR git_file_count, OR exec: [<command>, <args>...]
@@ -192,6 +192,22 @@ Validation rules (checked at load time, before anything is measured):
   runner.
 - `paths.include` must not be empty
 - `sampling.every` must be at least 1
+
+### Paths
+
+`paths.include` and `paths.exclude` are passed to git as
+[pathspecs](https://git-scm.com/docs/gitglossary#def_pathspec), so they
+behave like `git grep -- <pathspec>`, not like shell globs:
+
+- A plain path matches everything under it: `src` or `packages/app`.
+- `*` matches across directory separators. `packages/app/*.ts` matches every
+  `.ts` file at any depth under `packages/app`, including the top level.
+- Avoid a bare `**`: without magic it is just another `*`, so
+  `packages/app/**/*.ts` silently skips files directly in `packages/app`.
+- Prefix a pattern with `:(glob)` only when `*` must stop at `/`, for
+  example `:(glob)packages/*/src/*.ts` for exactly one directory level.
+
+Excludes are the same syntax; paleo-git adds the `:!` magic for you.
 
 ## Built-in runners
 
@@ -232,7 +248,7 @@ Counts files at a commit that fall under `paths.include` and outside
 - id: vanilla-extract-stylesheets
   traversal: default
   paths:
-    include: [":(glob)src/**/*.css.ts"]
+    include: ["src/*.css.ts"]
   runner:
     builtin: git_file_count
 ```
@@ -247,8 +263,8 @@ An external runner is any executable that:
    - `PALEO_COMMIT` — full commit SHA
    - `PALEO_REPO_PATH` — absolute path to the repo
    - `PALEO_RUNNER_CONFIG` — JSON string of runner config (from YAML)
-   - `PALEO_PATHS_INCLUDE` — JSON array of include globs
-   - `PALEO_PATHS_EXCLUDE` — JSON array of exclude globs
+   - `PALEO_PATHS_INCLUDE` — JSON array of include pathspecs
+   - `PALEO_PATHS_EXCLUDE` — JSON array of exclude pathspecs
 
 2. Prints a single JSON line to stdout:
 

@@ -8,7 +8,8 @@ import (
 
 // MetricHash returns a deterministic hash of the metric definition.
 // It changes when any field that affects measurement results changes:
-// id, traversal, paths, runner identity, or runner config.
+// id, traversal, paths, runner identity, or runner config. Output settings
+// are excluded: they change what is emitted, not what is measured.
 // Consumers can use this to detect config drift and invalidate cached results.
 func MetricHash(m Metric) string {
 	canonical := struct {

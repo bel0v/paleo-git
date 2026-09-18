@@ -506,3 +506,55 @@ metrics:
 		t.Errorf("expected error to mention duplicate metric id, got: %v", err)
 	}
 }
+
+func TestValidateConfig_OutputFiles(t *testing.T) {
+	metric := func(output string) string {
+		return `
+version: 1
+traversals:
+  default:
+    range: { start: "HEAD~10", end: "HEAD" }
+    mode: first_parent
+    sampling: { every: 1 }
+metrics:
+  - id: m
+    traversal: default
+    paths: { include: ["src/"] }
+    runner:
+      builtin: git_grep_count
+      config: { pattern: "foo" }` + output + `
+`
+	}
+
+	for name, output := range map[string]string{
+		"absent": "",
+		"list":   "\n    output: { files: list }",
+		"none":   "\n    output: { files: none }",
+	} {
+		cfg := mustParse(t, metric(output))
+		if err := Validate(cfg); err != nil {
+			t.Errorf("%s: unexpected validation error: %v", name, err)
+		}
+	}
+
+	cfg := mustParse(t, metric("\n    output: { files: no }"))
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for output.files: no")
+	}
+	if !strings.Contains(err.Error(), "output.files") || !strings.Contains(err.Error(), "none") {
+		t.Errorf("error should name the field and list valid values, got: %v", err)
+	}
+}
+
+func TestMetric_EmitsFiles(t *testing.T) {
+	if !(Metric{}).EmitsFiles() {
+		t.Error("default should emit files")
+	}
+	if !(Metric{Output: Output{Files: FilesList}}).EmitsFiles() {
+		t.Error("list should emit files")
+	}
+	if (Metric{Output: Output{Files: FilesNone}}).EmitsFiles() {
+		t.Error("none should not emit files")
+	}
+}

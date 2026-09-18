@@ -81,3 +81,17 @@ func TestMetricHash_ChangesWhenRunnerTypeChanges(t *testing.T) {
 		t.Error("hash should differ when runner type changes")
 	}
 }
+
+func TestMetricHash_IgnoresOutput(t *testing.T) {
+	m1 := Metric{
+		ID:        "test",
+		Traversal: "default",
+		Paths:     Paths{Include: []string{"src/**"}},
+		Runner:    RunnerRef{Builtin: "git_grep_count", Config: map[string]any{"pattern": "x"}},
+	}
+	m2 := m1
+	m2.Output = Output{Files: FilesNone}
+	if MetricHash(m1) != MetricHash(m2) {
+		t.Error("output settings must not change the hash: toggling them should not re-measure")
+	}
+}

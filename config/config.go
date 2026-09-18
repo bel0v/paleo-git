@@ -38,6 +38,37 @@ type Metric struct {
 	Traversal   string    `yaml:"traversal"`
 	Paths       Paths     `yaml:"paths"`
 	Runner      RunnerRef `yaml:"runner"`
+	Output      Output    `yaml:"output,omitempty"`
+}
+
+// Output controls what a measurement emits beyond its value. It does not
+// affect the value itself and is therefore not part of MetricHash.
+type Output struct {
+	Files FilesOutput `yaml:"files,omitempty"`
+}
+
+// FilesOutput says what a metric emits for the files it matched.
+type FilesOutput string
+
+const (
+	// FilesList emits the matching file paths (the default).
+	FilesList FilesOutput = "list"
+	// FilesNone drops them from results and the store.
+	FilesNone FilesOutput = "none"
+)
+
+// IsValid reports whether f is a known value; the empty value means FilesList.
+func (f FilesOutput) IsValid() bool {
+	switch f {
+	case "", FilesList, FilesNone:
+		return true
+	}
+	return false
+}
+
+// EmitsFiles reports whether results for this metric carry file paths.
+func (m Metric) EmitsFiles() bool {
+	return m.Output.Files != FilesNone
 }
 
 type Paths struct {
@@ -111,6 +142,10 @@ func Validate(cfg Config) error {
 
 		if len(m.Paths.Include) == 0 {
 			errs = append(errs, fmt.Sprintf("metrics[%d].paths.include: must not be empty", i))
+		}
+
+		if !m.Output.Files.IsValid() {
+			errs = append(errs, fmt.Sprintf("metrics[%d].output.files: invalid value %q (supported: %s, %s)", i, m.Output.Files, FilesList, FilesNone))
 		}
 	}
 

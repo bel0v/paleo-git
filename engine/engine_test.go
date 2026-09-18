@@ -56,6 +56,27 @@ func TestMeasure_RunsAllMetricsAtCommit(t *testing.T) {
 	if r.Value != 3 {
 		t.Errorf("expected value 3, got %d", r.Value)
 	}
+	if len(r.Files) != 2 {
+		t.Errorf("expected file paths by default, got %v", r.Files)
+	}
+}
+
+func TestMeasure_OutputFilesNoneDropsPaths(t *testing.T) {
+	repo := testutil.CreateFixtureRepo(t)
+	cfg := makeTestConfig()
+	cfg.Metrics[0].Output = config.Output{Files: config.FilesNone}
+
+	results, err := Measure(context.Background(), cfg, repo, "HEAD")
+	if err != nil {
+		t.Fatalf("Measure error: %v", err)
+	}
+	r := results[0]
+	if r.Status != StatusOK || r.Value != 3 {
+		t.Fatalf("value must be unaffected, got %s value=%d", r.Status, r.Value)
+	}
+	if r.Files != nil {
+		t.Errorf("expected no file paths with output.files: none, got %v", r.Files)
+	}
 }
 
 func TestMeasure_ResolvesCommitMetadata(t *testing.T) {
